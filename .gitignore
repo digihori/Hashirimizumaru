@@ -1,0 +1,20 @@
+*.iml
+.gradle/
+.idea/
+local.properties
+build/
+*/build/
+captures/
+.DS_Store
+
+# Codexで使用したローカルGradleキャッシュ
+.gradle-local/
+
+# Androidのネイティブビルド生成物
+.externalNativeBuild/
+.cxx/
+
+# 署名鍵・署名設定
+*.jks
+*.keystore
+keystore.properties
