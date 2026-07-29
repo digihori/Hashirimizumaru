@@ -3,19 +3,21 @@ package tk.horiuchi.hashirimizumaru
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Bundle
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Place
@@ -24,6 +26,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationCompat
@@ -45,9 +48,7 @@ class MainActivity : ComponentActivity() {
                         accepted = true
                     }
                 } else {
-                    BoatApp(onOpenPrivacy = {
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.PRIVACY_POLICY_URL)))
-                    })
+                    BoatApp()
                 }
             }
         }
@@ -98,12 +99,12 @@ private enum class AppTab(val label: String) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun BoatApp(
-    vm: MainViewModel = viewModel(),
-    onOpenPrivacy: () -> Unit
+    vm: MainViewModel = viewModel()
 ) {
     var tab by remember { mutableStateOf(AppTab.MAP) }
     var menuOpen by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
+    var privacyOpen by remember { mutableStateOf(false) }
     val context = androidx.compose.ui.platform.LocalContext.current
     val navInfo by vm.navInfo.collectAsStateWithLifecycle()
     val destination by vm.destination.collectAsStateWithLifecycle()
@@ -146,7 +147,7 @@ private fun BoatApp(
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
                             text = { Text("プライバシーポリシー") },
-                            onClick = { menuOpen = false; onOpenPrivacy() }
+                            onClick = { menuOpen = false; privacyOpen = true }
                         )
                         DropdownMenuItem(
                             text = { Text("バージョン情報") },
@@ -193,6 +194,61 @@ private fun BoatApp(
             text = { Text("バージョン ${BuildConfig.VERSION_NAME}\n\n軽い・速い・一日使える、横須賀のボート釣り専用ナビ。") },
             confirmButton = { TextButton(onClick = { aboutOpen = false }) { Text("閉じる") } }
         )
+    }
+    if (privacyOpen) {
+        PrivacyPolicyScreen(onClose = { privacyOpen = false })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PrivacyPolicyScreen(onClose: () -> Unit) {
+    var loading by remember { mutableStateOf(true) }
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    BackHandler {
+        if (webView?.canGoBack() == true) webView?.goBack() else onClose()
+    }
+    Surface(Modifier.fillMaxSize()) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("プライバシーポリシー") },
+                    navigationIcon = {
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "戻る")
+                        }
+                    }
+                )
+            }
+        ) { padding ->
+            Box(Modifier.padding(padding).fillMaxSize()) {
+                AndroidView(
+                    factory = { context ->
+                        WebView(context).apply {
+                            webView = this
+                            settings.javaScriptEnabled = false
+                            settings.domStorageEnabled = false
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    loading = false
+                                }
+                            }
+                            loadUrl(BuildConfig.PRIVACY_POLICY_URL)
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize()
+                )
+                if (loading) {
+                    CircularProgressIndicator(Modifier.align(androidx.compose.ui.Alignment.Center))
+                }
+            }
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            webView?.stopLoading()
+            webView?.destroy()
+        }
     }
 }
 

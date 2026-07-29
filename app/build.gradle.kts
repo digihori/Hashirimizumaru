@@ -19,7 +19,7 @@ android {
         buildConfigField(
             "String",
             "PRIVACY_POLICY_URL",
-            "\"https://github.com/horiuchi/Hashirimizumaru/blob/main/PRIVACY.ja.md\""
+            "\"https://raw.githubusercontent.com/digihori/Hashirimizumaru/main/PRIVACY.ja.md\""
         )
     }
     buildFeatures {
