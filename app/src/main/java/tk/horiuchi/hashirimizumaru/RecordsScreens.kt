@@ -16,9 +16,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
+import android.location.Location
+import kotlin.math.roundToInt
 
 @Composable
-fun WaypointScreen(vm: MainViewModel) {
+fun WaypointScreen(
+    vm: MainViewModel,
+    onShowOnMap: (Waypoint) -> Unit,
+    onStartNavigation: (Waypoint) -> Unit
+) {
     val values by vm.waypoints.collectAsStateWithLifecycle()
     val location by vm.location.collectAsStateWithLifecycle()
     var editing by remember { mutableStateOf<Waypoint?>(null) }
@@ -31,20 +37,22 @@ fun WaypointScreen(vm: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(values, key = { it.id }) { waypoint ->
-                ElevatedCard(Modifier.fillMaxWidth()) {
+                ElevatedCard(
+                    onClick = { onShowOnMap(waypoint) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(waypoint.name, style = MaterialTheme.typography.titleLarge)
                             Text(
                                 buildString {
                                     append("%.5f, %.5f".format(Locale.JAPAN, waypoint.latitude, waypoint.longitude))
-                                    waypoint.depth?.let { append("  水深 ${it}m") }
                                 },
                                 style = MaterialTheme.typography.bodySmall
                             )
                             if (waypoint.memo.isNotBlank()) Text(waypoint.memo)
                         }
-                        IconButton(onClick = { vm.destination.value = waypoint }) {
+                        IconButton(onClick = { onStartNavigation(waypoint) }) {
                             Icon(Icons.Default.Navigation, "ナビ開始", tint = MaterialTheme.colorScheme.secondary)
                         }
                         IconButton(onClick = { editing = waypoint }) { Icon(Icons.Default.Edit, "編集") }
@@ -88,7 +96,6 @@ fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) 
     var memo by remember(initial) { mutableStateOf(initial.memo) }
     var latitude by remember(initial) { mutableStateOf(initial.latitude.toString()) }
     var longitude by remember(initial) { mutableStateOf(initial.longitude.toString()) }
-    var depth by remember(initial) { mutableStateOf(initial.depth?.toString().orEmpty()) }
     val valid = name.isNotBlank() && latitude.toDoubleOrNull() != null && longitude.toDoubleOrNull() != null
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -108,11 +115,6 @@ fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) 
                         modifier = Modifier.weight(1f)
                     )
                 }
-                OutlinedTextField(
-                    depth, { depth = it }, label = { Text("想定水深 (m)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true
-                )
                 OutlinedTextField(memo, { memo = it }, label = { Text("メモ") }, minLines = 2)
             }
         },
@@ -125,7 +127,6 @@ fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) 
                         memo = memo.trim(),
                         latitude = latitude.toDouble(),
                         longitude = longitude.toDouble(),
-                        depth = depth.toDoubleOrNull(),
                         updated = System.currentTimeMillis()
                     ))
                 }
@@ -181,6 +182,191 @@ fun CatchScreen(vm: MainViewModel) {
         )
     }
 }
+
+@Composable
+fun TrackScreen(
+    vm: MainViewModel,
+    onShowOnMap: (TrackSession) -> Unit
+) {
+    val sessions by vm.trackSessions.collectAsStateWithLifecycle()
+    val points by vm.allTrackPoints.collectAsStateWithLifecycle()
+    val activeSession by vm.activeTrackSession.collectAsStateWithLifecycle()
+    var editing by remember { mutableStateOf<TrackSession?>(null) }
+    var deleting by remember { mutableStateOf<TrackSession?>(null) }
+    val pointsBySession = remember(points) { points.groupBy { it.sessionId } }
+
+    Box(Modifier.fillMaxSize()) {
+        if (sessions.isEmpty()) {
+            EmptyState("航跡はまだありません", "地図画面で航跡記録を開始するか、ポイントへのナビを開始してください")
+        }
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(sessions, key = { it.id }) { session ->
+                val sessionPoints = pointsBySession[session.id].orEmpty()
+                val isRecording = activeSession?.id == session.id
+                ElevatedCard(
+                    onClick = { onShowOnMap(session) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (isRecording) Icons.Default.RadioButtonChecked else Icons.Default.Timeline,
+                                null,
+                                tint = if (isRecording) MaterialTheme.colorScheme.secondary
+                                    else MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(session.name, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    if (isRecording) "記録中"
+                                    else trackPeriodText(session),
+                                    color = if (isRecording) MaterialTheme.colorScheme.secondary
+                                        else LocalContentColor.current,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            IconButton(onClick = { onShowOnMap(session) }) {
+                                Icon(Icons.Default.Map, "地図に表示")
+                            }
+                            IconButton(onClick = { editing = session }) {
+                                Icon(Icons.Default.Edit, "編集")
+                            }
+                            IconButton(
+                                onClick = { deleting = session },
+                                enabled = !isRecording
+                            ) {
+                                Icon(Icons.Default.Delete, "削除")
+                            }
+                        }
+                        Text(
+                            "${durationText(session)}・${distanceText(trackDistance(sessionPoints))}・${sessionPoints.size}点",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        if (session.memo.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(session.memo)
+                        }
+                        if (isRecording) {
+                            TextButton(
+                                onClick = vm::stopRecording,
+                                modifier = Modifier.align(Alignment.End)
+                            ) {
+                                Icon(Icons.Default.Stop, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("記録を終了")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    editing?.let { session ->
+        TrackSessionEditor(
+            initial = session,
+            onDismiss = { editing = null },
+            onSave = {
+                vm.updateTrackSession(it)
+                editing = null
+            }
+        )
+    }
+    deleting?.let { session ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("航跡を削除") },
+            text = { Text("「${session.name}」と記録された位置情報を削除しますか？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteTrackSession(session)
+                    deleting = null
+                }) { Text("削除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleting = null }) { Text("キャンセル") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun TrackSessionEditor(
+    initial: TrackSession,
+    onDismiss: () -> Unit,
+    onSave: (TrackSession) -> Unit
+) {
+    var name by remember(initial) { mutableStateOf(initial.name) }
+    var memo by remember(initial) { mutableStateOf(initial.memo) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("航跡を編集") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    name,
+                    { name = it },
+                    label = { Text("名前 *") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    memo,
+                    { memo = it },
+                    label = { Text("メモ") },
+                    minLines = 3
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = name.isNotBlank(),
+                onClick = {
+                    onSave(initial.copy(name = name.trim(), memo = memo.trim()))
+                }
+            ) { Text("保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
+    )
+}
+
+private fun trackPeriodText(session: TrackSession): String {
+    val format = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN)
+    val end = session.endedAt ?: System.currentTimeMillis()
+    return "${format.format(Date(session.startedAt))}〜${format.format(Date(end))}"
+}
+
+private fun durationText(session: TrackSession): String {
+    val millis = (session.endedAt ?: System.currentTimeMillis()) - session.startedAt
+    val totalMinutes = (millis.coerceAtLeast(0L) / 60_000L)
+    val hours = totalMinutes / 60
+    val minutes = totalMinutes % 60
+    return if (hours > 0) "${hours}時間${minutes}分" else "${minutes}分"
+}
+
+private fun trackDistance(points: List<TrackPoint>): Float {
+    var total = 0f
+    points.zipWithNext().forEach { (from, to) ->
+        val result = FloatArray(1)
+        Location.distanceBetween(
+            from.latitude,
+            from.longitude,
+            to.latitude,
+            to.longitude,
+            result
+        )
+        total += result[0]
+    }
+    return total
+}
+
+private fun distanceText(meters: Float): String =
+    if (meters < 1000) "${meters.roundToInt()}m"
+    else String.format(Locale.JAPAN, "%.1fkm", meters / 1000)
 
 @Composable
 private fun CatchEditor(

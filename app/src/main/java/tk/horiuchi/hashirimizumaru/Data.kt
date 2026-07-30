@@ -2,6 +2,8 @@ package tk.horiuchi.hashirimizumaru
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "waypoints")
@@ -11,7 +13,6 @@ data class Waypoint(
     val memo: String = "",
     val latitude: Double,
     val longitude: Double,
-    val depth: Double? = null,
     val created: Long = System.currentTimeMillis(),
     val updated: Long = System.currentTimeMillis()
 )
@@ -28,9 +29,20 @@ data class CatchRecord(
     val memo: String = ""
 )
 
-@Entity(tableName = "tracks", indices = [Index("time")])
+@Entity(tableName = "track_sessions", indices = [Index("startedAt")])
+data class TrackSession(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val memo: String = "",
+    val startedAt: Long = System.currentTimeMillis(),
+    val endedAt: Long? = null,
+    val startedByNavigation: Boolean = false
+)
+
+@Entity(tableName = "tracks", indices = [Index("time"), Index("sessionId")])
 data class TrackPoint(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(defaultValue = "1") val sessionId: Long,
     val time: Long = System.currentTimeMillis(),
     val latitude: Double,
     val longitude: Double
@@ -49,23 +61,94 @@ interface BoatDao {
     @Insert suspend fun saveCatch(value: CatchRecord)
     @Delete suspend fun deleteCatch(value: CatchRecord)
 
+    @Query("SELECT * FROM track_sessions ORDER BY startedAt DESC")
+    fun trackSessions(): Flow<List<TrackSession>>
+    @Query("SELECT * FROM track_sessions WHERE endedAt IS NULL ORDER BY startedAt DESC LIMIT 1")
+    fun activeTrackSession(): Flow<TrackSession?>
+    @Insert suspend fun saveTrackSession(value: TrackSession): Long
+    @Update suspend fun updateTrackSession(value: TrackSession)
+    @Delete suspend fun deleteTrackSession(value: TrackSession)
+
     @Query("SELECT * FROM tracks ORDER BY time ASC")
     fun tracks(): Flow<List<TrackPoint>>
     @Insert suspend fun saveTracks(values: List<TrackPoint>)
+    @Query("DELETE FROM tracks WHERE sessionId = :sessionId")
+    suspend fun deleteTracksForSession(sessionId: Long)
     @Query("DELETE FROM tracks")
     suspend fun clearTracks()
 }
 
 @Database(
-    entities = [Waypoint::class, CatchRecord::class, TrackPoint::class],
-    version = 1,
+    entities = [Waypoint::class, CatchRecord::class, TrackSession::class, TrackPoint::class],
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun dao(): BoatDao
     companion object {
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `waypoints_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `memo` TEXT NOT NULL,
+                        `latitude` REAL NOT NULL,
+                        `longitude` REAL NOT NULL,
+                        `created` INTEGER NOT NULL,
+                        `updated` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `waypoints_new`
+                        (`id`, `name`, `memo`, `latitude`, `longitude`, `created`, `updated`)
+                    SELECT `id`, `name`, `memo`, `latitude`, `longitude`, `created`, `updated`
+                    FROM `waypoints`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `waypoints`")
+                db.execSQL("ALTER TABLE `waypoints_new` RENAME TO `waypoints`")
+            }
+        }
+
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `track_sessions` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `name` TEXT NOT NULL,
+                        `memo` TEXT NOT NULL,
+                        `startedAt` INTEGER NOT NULL,
+                        `endedAt` INTEGER,
+                        `startedByNavigation` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_track_sessions_startedAt` ON `track_sessions` (`startedAt`)"
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `track_sessions`
+                        (`id`, `name`, `memo`, `startedAt`, `endedAt`, `startedByNavigation`)
+                    SELECT 1, '以前の航跡', '', MIN(`time`), MAX(`time`), 0
+                    FROM `tracks`
+                    HAVING COUNT(*) > 0
+                    """.trimIndent()
+                )
+                db.execSQL("ALTER TABLE `tracks` ADD COLUMN `sessionId` INTEGER NOT NULL DEFAULT 1")
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_tracks_sessionId` ON `tracks` (`sessionId`)"
+                )
+            }
+        }
+
         fun create(context: Context) = Room.databaseBuilder(
             context, AppDatabase::class.java, "hashirimizumaru.db"
-        ).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }
