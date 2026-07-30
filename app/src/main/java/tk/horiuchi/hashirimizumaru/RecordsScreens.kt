@@ -168,6 +168,7 @@ fun CatchScreen(vm: MainViewModel) {
     var editing by remember { mutableStateOf<CatchRecord?>(null) }
     var deleting by remember { mutableStateOf<CatchRecord?>(null) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showPhotoLocationExplanation by remember { mutableStateOf(false) }
     val latestImportedPhoto by rememberUpdatedState(importedPhoto)
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -196,6 +197,11 @@ fun CatchScreen(vm: MainViewModel) {
             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
         )
     }
+    fun launchPhotoPicker() {
+        photoPicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
     fun selectPhoto() {
         if (Build.VERSION.SDK_INT >= 29 &&
             ContextCompat.checkSelfPermission(
@@ -203,11 +209,9 @@ fun CatchScreen(vm: MainViewModel) {
                 Manifest.permission.ACCESS_MEDIA_LOCATION
             ) != PackageManager.PERMISSION_GRANTED
         ) {
-            mediaLocationPermission.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+            showPhotoLocationExplanation = true
         } else {
-            photoPicker.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-            )
+            launchPhotoPicker()
         }
     }
     DisposableEffect(Unit) {
@@ -341,6 +345,33 @@ fun CatchScreen(vm: MainViewModel) {
             text = { Text(message) },
             confirmButton = {
                 TextButton(onClick = { errorMessage = null }) { Text("閉じる") }
+            }
+        )
+    }
+    if (showPhotoLocationExplanation) {
+        AlertDialog(
+            onDismissRequest = { showPhotoLocationExplanation = false },
+            title = { Text("写真の位置情報") },
+            text = {
+                Text(
+                    "写真に保存された撮影場所を釣果へ自動入力するため、" +
+                        "選択した写真の位置情報へのアクセスを許可できます。" +
+                        "許可しない場合は現在地を使用します。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showPhotoLocationExplanation = false
+                    mediaLocationPermission.launch(
+                        Manifest.permission.ACCESS_MEDIA_LOCATION
+                    )
+                }) { Text("許可して選択") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showPhotoLocationExplanation = false
+                    launchPhotoPicker()
+                }) { Text("許可せず選択") }
             }
         )
     }

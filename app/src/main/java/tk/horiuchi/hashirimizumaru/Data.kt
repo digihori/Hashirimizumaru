@@ -65,6 +65,8 @@ interface BoatDao {
     fun trackSessions(): Flow<List<TrackSession>>
     @Query("SELECT * FROM track_sessions WHERE endedAt IS NULL ORDER BY startedAt DESC LIMIT 1")
     fun activeTrackSession(): Flow<TrackSession?>
+    @Query("SELECT * FROM track_sessions WHERE id = :id LIMIT 1")
+    suspend fun trackSession(id: Long): TrackSession?
     @Insert suspend fun saveTrackSession(value: TrackSession): Long
     @Update suspend fun updateTrackSession(value: TrackSession)
     @Delete suspend fun deleteTrackSession(value: TrackSession)

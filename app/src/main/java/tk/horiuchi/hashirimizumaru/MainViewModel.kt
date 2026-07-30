@@ -20,6 +20,7 @@ data class TrackFocus(val sessionId: Long, val requestId: Long)
 data class NavigationStart(val latitude: Double, val longitude: Double)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
+    private val appContext = app.applicationContext
     private val dao = (app as HashirimizumaruApp).database.dao()
     private val tracker = LocationTracker(app)
     private val contourRepository = ContourRepository(app)
@@ -76,7 +77,54 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             contourRepository.cached()?.let { _contours.value = it }
         }
         viewModelScope.launch {
-            dao.activeTrackSession().first()?.let { interruptedTrackSession.value = it }
+            dao.activeTrackSession().first()?.let { session ->
+                val status = LocationTrackingService.status(appContext)
+                if (status?.sessionId == session.id) {
+                    currentRecordingSession = session
+                    recording.value = true
+                    recordingStartedByNavigation = status.startedByNavigation
+                    selectedTrackSessionId.value = session.id
+                    status.destination?.let { restoredDestination ->
+                        destination.value = restoredDestination
+                        location.filterNotNull().first().let {
+                            navigationStart.value =
+                                NavigationStart(it.latitude, it.longitude)
+                        }
+                    }
+                } else {
+                    interruptedTrackSession.value = session
+                }
+            }
+        }
+        viewModelScope.launch {
+            BackgroundTrackingEvents.arrivals.collect { arrival ->
+                if (destination.value?.id == arrival.destinationId) {
+                    val name = destination.value?.name.orEmpty()
+                    destination.value = null
+                    navigationStart.value = null
+                    if (arrival.stoppedRecording) {
+                        recording.value = false
+                        currentRecordingSession = null
+                        recordingStartedByNavigation = false
+                    }
+                    messages.emit("ポイント「$name」に到着しました。ナビを終了します")
+                }
+            }
+        }
+        viewModelScope.launch {
+            BackgroundTrackingEvents.navigationStopped.collect { stoppedDestinationId ->
+                if (destination.value?.id == stoppedDestinationId) {
+                    destination.value = null
+                    navigationStart.value = null
+                }
+            }
+        }
+        viewModelScope.launch {
+            BackgroundTrackingEvents.recordingStopped.collect {
+                recording.value = false
+                currentRecordingSession = null
+                recordingStartedByNavigation = false
+            }
         }
     }
 
@@ -131,6 +179,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleRecording() {
+        if (recording.value && destination.value != null) {
+            messages.tryEmit("ナビ中は航跡記録を停止できません。先にナビを終了してください")
+            return
+        }
         if (recording.value) stopRecording() else startRecording(startedByNavigation = false)
     }
 
@@ -150,7 +202,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             currentRecordingSession = newSession.copy(id = sessionId)
             selectedTrackSessionId.value = sessionId
             if (recording.value) {
-                collectTrackPoints(sessionId)
+                LocationTrackingService.start(
+                    appContext,
+                    sessionId,
+                    startedByNavigation,
+                    destination.takeIf { startedByNavigation }?.value
+                )
             } else {
                 dao.updateTrackSession(
                     currentRecordingSession!!.copy(endedAt = System.currentTimeMillis())
@@ -160,39 +217,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun collectTrackPoints(sessionId: Long) {
-        bufferJob?.cancel()
-        bufferJob = viewModelScope.launch {
-            var lastSavedAt = 0L
-            location.filterNotNull().collect { point ->
-                val now = System.currentTimeMillis()
-                if (now - lastSavedAt >= 15_000) {
-                    trackBuffer += TrackPoint(
-                        sessionId = sessionId,
-                        latitude = point.latitude,
-                        longitude = point.longitude
-                    )
-                    bufferedTracks.value = trackBuffer.toList()
-                    lastSavedAt = now
-                }
-                if (trackBuffer.size >= 4) flushTracks()
-            }
-        }
-    }
-
     fun stopRecording() {
         if (!recording.value) return
         recording.value = false
-        bufferJob?.cancel()
-        bufferJob = null
-        viewModelScope.launch {
-            flushTracks()
-            (currentRecordingSession ?: activeTrackSession.value)?.let { session ->
-                dao.updateTrackSession(session.copy(endedAt = System.currentTimeMillis()))
-            }
-            currentRecordingSession = null
-            recordingStartedByNavigation = false
-        }
+        LocationTrackingService.stopRecording(appContext)
+        currentRecordingSession = null
+        recordingStartedByNavigation = false
     }
 
     fun previewNavigation(waypoint: Waypoint) {
@@ -222,16 +252,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
-        if (!recording.value) startRecording(startedByNavigation = true)
+        if (!recording.value) {
+            startRecording(startedByNavigation = true)
+        } else {
+            LocationTrackingService.setNavigation(appContext, waypoint)
+        }
         followLocation.value = true
         messages.tryEmit("ポイント「${waypoint.name}」へのナビを開始しました")
     }
 
     fun stopNavigation() {
+        val autoRecording = recordingStartedByNavigation
+        LocationTrackingService.stopNavigation(appContext)
         destination.value = null
         pendingDestination.value = null
         navigationStart.value = null
-        if (recordingStartedByNavigation) stopRecording()
+        if (autoRecording) {
+            recording.value = false
+            currentRecordingSession = null
+            recordingStartedByNavigation = false
+        }
     }
 
     fun resumeInterruptedTrack() {
@@ -241,12 +281,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         recordingStartedByNavigation = false
         recording.value = true
         selectedTrackSessionId.value = session.id
-        collectTrackPoints(session.id)
+        LocationTrackingService.start(
+            appContext,
+            session.id,
+            startedByNavigation = false
+        )
     }
 
     fun finishInterruptedTrack() {
         val session = interruptedTrackSession.value ?: return
         interruptedTrackSession.value = null
+        LocationTrackingService.stopRecording(appContext)
         viewModelScope.launch {
             dao.updateTrackSession(session.copy(endedAt = System.currentTimeMillis()))
         }

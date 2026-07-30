@@ -1,13 +1,12 @@
 package tk.horiuchi.hashirimizumaru
 
 import android.Manifest
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Build
-import android.os.VibrationEffect
-import android.os.Vibrator
+import android.provider.Settings
 import android.webkit.WebView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -29,8 +28,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import androidx.core.app.NotificationCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -108,44 +108,102 @@ private fun BoatApp(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
-    val navInfo by vm.navInfo.collectAsStateWithLifecycle()
-    val destination by vm.destination.collectAsStateWithLifecycle()
+    val permissionPreferences = remember {
+        context.getSharedPreferences(
+            "permission_guidance",
+            android.content.Context.MODE_PRIVATE
+        )
+    }
     val interruptedTrack by vm.interruptedTrackSession.collectAsStateWithLifecycle()
-    var alertedDestinationId by remember { mutableStateOf<Long?>(null) }
+    val recording by vm.recording.collectAsStateWithLifecycle()
+    var showNotificationExplanation by remember { mutableStateOf(false) }
+    var locationPermissionDenied by remember { mutableStateOf(false) }
+    var pendingNotificationAction by remember {
+        mutableStateOf<(() -> Unit)?>(null)
+    }
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true) vm.startLocation()
+        val hasLocation = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        if (hasLocation) vm.startLocation() else locationPermissionDenied = true
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val action = pendingNotificationAction
+        pendingNotificationAction = null
+        action?.invoke()
+        if (!granted) {
+            scope.launch {
+                snackbarHostState.showSnackbar(
+                    "通知が許可されていません。ナビ・航跡記録中の常駐通知は端末設定から許可できます"
+                )
+            }
+        }
+    }
+    fun runWithNotificationPermission(action: () -> Unit) {
+        if (Build.VERSION.SDK_INT < 33 ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            action()
+            return
+        }
+        pendingNotificationAction = action
+        if (!permissionPreferences.getBoolean("notification_explained", false)) {
+            showNotificationExplanation = true
+        } else {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
     }
     LaunchedEffect(Unit) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED) vm.startLocation()
-        else permissionLauncher.launch(
-            buildList {
+        val hasLocation =
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ) == PackageManager.PERMISSION_GRANTED
+        val missingPermissions = buildList {
+            if (!hasLocation) {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
                 add(Manifest.permission.ACCESS_COARSE_LOCATION)
-                if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-            }.toTypedArray()
-        )
+            }
+        }
+        if (hasLocation) vm.startLocation()
+        if (missingPermissions.isNotEmpty()) {
+            permissionLauncher.launch(missingPermissions.toTypedArray())
+        }
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        if (ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED ||
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        ) {
+            vm.startLocation()
+        }
     }
     LaunchedEffect(Unit) {
         vm.messages.collect { message ->
             snackbarHostState.showSnackbar(message)
-        }
-    }
-    LaunchedEffect(navInfo?.distanceMeters, destination?.id) {
-        val target = destination
-        if (target == null) alertedDestinationId = null
-        else if (navInfo?.distanceMeters?.let { it <= 30f } == true && alertedDestinationId != target.id) {
-            notifyArrival(context, target.name)
-            alertedDestinationId = target.id
-            vm.stopNavigation()
-            scope.launch {
-                snackbarHostState.showSnackbar(
-                    "ポイント「${target.name}」に到着しました。ナビを終了します"
-                )
-            }
         }
     }
     DisposableEffect(Unit) { onDispose { vm.stopLocation() } }
@@ -199,7 +257,14 @@ private fun BoatApp(
             when (tab) {
                 AppTab.MAP -> MapScreen(
                     vm = vm,
-                    onCancelNavigationPreview = { tab = AppTab.WAYPOINTS }
+                    onCancelNavigationPreview = { tab = AppTab.WAYPOINTS },
+                    onToggleRecording = {
+                        if (recording) vm.toggleRecording()
+                        else runWithNotificationPermission(vm::toggleRecording)
+                    },
+                    onConfirmNavigation = {
+                        runWithNotificationPermission(vm::confirmNavigation)
+                    }
                 )
                 AppTab.WAYPOINTS -> WaypointScreen(
                     vm = vm,
@@ -250,6 +315,66 @@ private fun BoatApp(
             },
             dismissButton = {
                 TextButton(onClick = vm::finishInterruptedTrack) { Text("記録を終了") }
+            }
+        )
+    }
+    if (showNotificationExplanation) {
+        AlertDialog(
+            onDismissRequest = {
+                showNotificationExplanation = false
+                pendingNotificationAction = null
+            },
+            title = { Text("通知の許可") },
+            text = {
+                Text(
+                    "画面OFFや他のアプリを使用中もナビと航跡記録を継続するため、" +
+                        "動作中は常駐通知を表示します。到着通知にも使用します。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showNotificationExplanation = false
+                    permissionPreferences.edit()
+                        .putBoolean("notification_explained", true)
+                        .apply()
+                    notificationPermissionLauncher.launch(
+                        Manifest.permission.POST_NOTIFICATIONS
+                    )
+                }) { Text("続ける") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showNotificationExplanation = false
+                    pendingNotificationAction = null
+                }) { Text("キャンセル") }
+            }
+        )
+    }
+    if (locationPermissionDenied) {
+        AlertDialog(
+            onDismissRequest = { locationPermissionDenied = false },
+            title = { Text("位置情報が必要です") },
+            text = {
+                Text(
+                    "現在地表示、ナビ、航跡記録を利用するには位置情報の許可が必要です。" +
+                        "許可はAndroidのアプリ設定から変更できます。"
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    locationPermissionDenied = false
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                    )
+                }) { Text("設定を開く") }
+            },
+            dismissButton = {
+                TextButton(onClick = { locationPermissionDenied = false }) {
+                    Text("閉じる")
+                }
             }
         )
     }
@@ -392,28 +517,4 @@ private fun markdownDocument(markdown: String): String {
         <body>$body</body>
         </html>
     """.trimIndent()
-}
-
-private fun notifyArrival(context: android.content.Context, name: String) {
-    val vibrator = context.getSystemService(Vibrator::class.java)
-    vibrator?.vibrate(VibrationEffect.createOneShot(800, VibrationEffect.DEFAULT_AMPLITUDE))
-    val manager = context.getSystemService(NotificationManager::class.java)
-    val channelId = "arrival"
-    manager.createNotificationChannel(
-        NotificationChannel(channelId, "目的地への到着", NotificationManager.IMPORTANCE_HIGH)
-    )
-    if (Build.VERSION.SDK_INT < 33 ||
-        ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-    ) {
-        manager.notify(
-            1001,
-            NotificationCompat.Builder(context, channelId)
-                .setSmallIcon(android.R.drawable.ic_dialog_map)
-                .setContentTitle("目的地付近です")
-                .setContentText("「$name」まで約50m以内に入りました")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setAutoCancel(true)
-                .build()
-        )
-    }
 }

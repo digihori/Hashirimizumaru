@@ -45,7 +45,9 @@ private const val MAX_LON = 139.820
 @Composable
 fun MapScreen(
     vm: MainViewModel,
-    onCancelNavigationPreview: () -> Unit = {}
+    onCancelNavigationPreview: () -> Unit = {},
+    onToggleRecording: () -> Unit = vm::toggleRecording,
+    onConfirmNavigation: () -> Unit = vm::confirmNavigation
 ) {
     val location by vm.location.collectAsStateWithLifecycle()
     val nav by vm.navInfo.collectAsStateWithLifecycle()
@@ -182,7 +184,7 @@ fun MapScreen(
             FilledTonalIconButton(onClick = vm::togglePowerSaving) {
                 Icon(if (powerSaving) Icons.Default.BatterySaver else Icons.Default.GpsFixed, "省電力")
             }
-            FilledTonalIconButton(onClick = vm::toggleRecording) {
+            FilledTonalIconButton(onClick = onToggleRecording) {
                 Icon(if (recording) Icons.Default.Stop else Icons.Default.Route, "航跡記録")
             }
             if (BuildConfig.DEBUG) {
@@ -215,7 +217,7 @@ fun MapScreen(
                 waypoint = pendingDestination!!,
                 nav = pendingNav,
                 onConfirm = {
-                    vm.confirmNavigation()
+                    onConfirmNavigation()
                     recenterRequest++
                 },
                 onCancel = {
