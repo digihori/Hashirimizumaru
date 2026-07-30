@@ -1,7 +1,17 @@
 package tk.horiuchi.hashirimizumaru
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -10,13 +20,24 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.core.content.ContextCompat
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
+import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import android.location.Location
+import java.io.File
 import kotlin.math.roundToInt
 
 @Composable
@@ -140,9 +161,65 @@ fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) 
 fun CatchScreen(vm: MainViewModel) {
     val values by vm.catches.collectAsStateWithLifecycle()
     val location by vm.location.collectAsStateWithLifecycle()
-    var adding by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var importedPhoto by remember { mutableStateOf<ImportedCatchPhoto?>(null) }
+    var importing by remember { mutableStateOf(false) }
+    var editing by remember { mutableStateOf<CatchRecord?>(null) }
+    var deleting by remember { mutableStateOf<CatchRecord?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val latestImportedPhoto by rememberUpdatedState(importedPhoto)
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                importing = true
+                val canReadLocation = Build.VERSION.SDK_INT < 29 ||
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.ACCESS_MEDIA_LOCATION
+                    ) == PackageManager.PERMISSION_GRANTED
+                runCatching { vm.importCatchPhoto(uri, canReadLocation) }
+                    .onSuccess { importedPhoto = it }
+                    .onFailure {
+                        errorMessage = it.message ?: "写真を読み込めませんでした"
+                    }
+                importing = false
+            }
+        }
+    }
+    val mediaLocationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) {
+        photoPicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+        )
+    }
+    fun selectPhoto() {
+        if (Build.VERSION.SDK_INT >= 29 &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACCESS_MEDIA_LOCATION
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            mediaLocationPermission.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+        } else {
+            photoPicker.launch(
+                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+            )
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose {
+            latestImportedPhoto?.let { vm.discardCatchPhoto(it.relativePath) }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
-        if (values.isEmpty()) EmptyState("釣果はまだありません", "魚が釣れたら右下のボタンから記録しましょう")
+        if (values.isEmpty()) {
+            EmptyState("釣果はまだありません", "写真を選んで釣果を記録しましょう")
+        }
         LazyColumn(
             Modifier.fillMaxSize(),
             contentPadding = PaddingValues(12.dp, 12.dp, 12.dp, 88.dp),
@@ -150,35 +227,121 @@ fun CatchScreen(vm: MainViewModel) {
         ) {
             items(values, key = { it.id }) { value ->
                 ElevatedCard(Modifier.fillMaxWidth()) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.SetMeal, null, modifier = Modifier.size(36.dp), tint = MaterialTheme.colorScheme.secondary)
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text(
-                                value.fish + (value.size?.let { "  ${it}cm" } ?: ""),
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            Text(DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(value.time)))
-                            Text("%.5f, %.5f".format(Locale.JAPAN, value.latitude, value.longitude), style = MaterialTheme.typography.bodySmall)
-                            if (value.memo.isNotBlank()) Text(value.memo)
+                    Column {
+                        CatchPhoto(
+                            file = vm.catchPhotoFile(value.photoUri),
+                            modifier = Modifier.fillMaxWidth().height(210.dp)
+                        )
+                        Row(
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    DateFormat.getDateTimeInstance(
+                                        DateFormat.MEDIUM,
+                                        DateFormat.SHORT
+                                    ).format(Date(value.time)),
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                value.size?.let { Text("$it cm") }
+                                Text(
+                                    "%.5f, %.5f".format(
+                                        Locale.JAPAN,
+                                        value.latitude,
+                                        value.longitude
+                                    ),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                if (value.memo.isNotBlank()) Text(value.memo)
+                            }
+                            IconButton(onClick = { editing = value }) {
+                                Icon(Icons.Default.Edit, "編集")
+                            }
+                            IconButton(onClick = { deleting = value }) {
+                                Icon(Icons.Default.Delete, "削除")
+                            }
                         }
                     }
                 }
             }
         }
         ExtendedFloatingActionButton(
-            onClick = { adding = true },
-            icon = { Icon(Icons.Default.Add, null) },
-            text = { Text("釣果を記録") },
+            onClick = ::selectPhoto,
+            icon = { Icon(Icons.Default.AddAPhoto, null) },
+            text = { Text("写真から記録") },
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
         )
+        if (importing) {
+            Surface(
+                Modifier.align(Alignment.Center),
+                color = MaterialTheme.colorScheme.surface,
+                shape = MaterialTheme.shapes.medium,
+                shadowElevation = 8.dp
+            ) {
+                Row(
+                    Modifier.padding(20.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 3.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text("写真を読み込んでいます")
+                }
+            }
+        }
     }
-    if (adding) {
+
+    importedPhoto?.let { photo ->
         CatchEditor(
-            latitude = location?.latitude ?: 35.2708,
-            longitude = location?.longitude ?: 139.7305,
-            onDismiss = { adding = false },
-            onSave = { vm.saveCatch(it); adding = false }
+            photo = photo,
+            photoFile = vm.catchPhotoFile(photo.relativePath),
+            fallbackLatitude = location?.latitude ?: 35.2708,
+            fallbackLongitude = location?.longitude ?: 139.7305,
+            onDismiss = {
+                vm.discardCatchPhoto(photo.relativePath)
+                importedPhoto = null
+            },
+            onSave = {
+                vm.saveCatch(it)
+                importedPhoto = null
+            }
+        )
+    }
+    editing?.let { value ->
+        CatchRecordEditor(
+            initial = value,
+            photoFile = vm.catchPhotoFile(value.photoUri),
+            onDismiss = { editing = null },
+            onSave = {
+                vm.saveCatch(it)
+                editing = null
+            }
+        )
+    }
+    deleting?.let { value ->
+        AlertDialog(
+            onDismissRequest = { deleting = null },
+            title = { Text("釣果を削除") },
+            text = { Text("この釣果と保存された写真を削除しますか？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteCatch(value)
+                    deleting = null
+                }) { Text("削除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleting = null }) { Text("キャンセル") }
+            }
+        )
+    }
+    errorMessage?.let { message ->
+        AlertDialog(
+            onDismissRequest = { errorMessage = null },
+            title = { Text("写真を読み込めませんでした") },
+            text = { Text(message) },
+            confirmButton = {
+                TextButton(onClick = { errorMessage = null }) { Text("閉じる") }
+            }
         )
     }
 }
@@ -370,39 +533,101 @@ private fun distanceText(meters: Float): String =
 
 @Composable
 private fun CatchEditor(
-    latitude: Double,
-    longitude: Double,
+    photo: ImportedCatchPhoto,
+    photoFile: File?,
+    fallbackLatitude: Double,
+    fallbackLongitude: Double,
     onDismiss: () -> Unit,
     onSave: (CatchRecord) -> Unit
 ) {
-    var fish by remember { mutableStateOf("") }
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val time = photo.takenAt ?: System.currentTimeMillis()
+    var latitude by remember(photo) {
+        mutableStateOf((photo.latitude ?: fallbackLatitude).toString())
+    }
+    var longitude by remember(photo) {
+        mutableStateOf((photo.longitude ?: fallbackLongitude).toString())
+    }
     var size by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
+    val valid = latitude.toDoubleOrNull() != null && longitude.toDoubleOrNull() != null
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("釣果を記録") },
+        title = { Text("写真から釣果を記録") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(fish, { fish = it }, label = { Text("魚種 *") }, singleLine = true)
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = if (imeVisible) 220.dp else 420.dp)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CatchPhoto(
+                    file = photoFile,
+                    modifier = Modifier.fillMaxWidth().height(190.dp)
+                )
+                Text(
+                    DateFormat.getDateTimeInstance(
+                        DateFormat.MEDIUM,
+                        DateFormat.SHORT
+                    ).format(Date(time)),
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    if (photo.takenAt != null) "撮影日時を写真から取得"
+                    else "撮影日時がないため現在時刻を使用",
+                    style = MaterialTheme.typography.labelSmall
+                )
                 OutlinedTextField(
                     size, { size = it }, label = { Text("サイズ (cm)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
-                OutlinedTextField(memo, { memo = it }, label = { Text("メモ") }, minLines = 2)
-                Text("位置: %.5f, %.5f".format(Locale.JAPAN, latitude, longitude), style = MaterialTheme.typography.bodySmall)
-                Text("写真は次期版で対応予定", style = MaterialTheme.typography.labelSmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        latitude,
+                        { latitude = it },
+                        label = { Text("緯度") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        longitude,
+                        { longitude = it },
+                        label = { Text("経度") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Text(
+                    if (photo.latitude != null && photo.longitude != null) {
+                        "位置を写真から取得"
+                    } else {
+                        "写真に位置情報がないため現在地を使用"
+                    },
+                    style = MaterialTheme.typography.labelSmall
+                )
+                OutlinedTextField(
+                    memo,
+                    { memo = it },
+                    label = { Text("メモ") },
+                    minLines = 2,
+                    maxLines = 4
+                )
             }
         },
         confirmButton = {
             Button(
-                enabled = fish.isNotBlank(),
+                enabled = valid,
                 onClick = {
                     onSave(CatchRecord(
-                        latitude = latitude,
-                        longitude = longitude,
-                        fish = fish.trim(),
+                        time = time,
+                        latitude = latitude.toDouble(),
+                        longitude = longitude.toDouble(),
                         size = size.toDoubleOrNull(),
+                        photoUri = photo.relativePath,
                         memo = memo.trim()
                     ))
                 }
@@ -410,6 +635,149 @@ private fun CatchEditor(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("キャンセル") } }
     )
+}
+
+@Composable
+private fun CatchRecordEditor(
+    initial: CatchRecord,
+    photoFile: File?,
+    onDismiss: () -> Unit,
+    onSave: (CatchRecord) -> Unit
+) {
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN) }
+    var dateTime by remember(initial) { mutableStateOf(dateFormat.format(Date(initial.time))) }
+    var latitude by remember(initial) { mutableStateOf(initial.latitude.toString()) }
+    var longitude by remember(initial) { mutableStateOf(initial.longitude.toString()) }
+    var size by remember(initial) { mutableStateOf(initial.size?.toString().orEmpty()) }
+    var memo by remember(initial) { mutableStateOf(initial.memo) }
+    val parsedTime = runCatching {
+        dateFormat.apply { isLenient = false }.parse(dateTime)?.time
+    }.getOrNull()
+    val parsedLatitude = latitude.toDoubleOrNull()
+    val parsedLongitude = longitude.toDoubleOrNull()
+    val parsedSize = size.toDoubleOrNull()
+    val valid = parsedTime != null &&
+        parsedLatitude != null && parsedLatitude in -90.0..90.0 &&
+        parsedLongitude != null && parsedLongitude in -180.0..180.0 &&
+        (size.isBlank() || parsedSize != null)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("釣果を編集") },
+        text = {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = if (imeVisible) 220.dp else 420.dp)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                CatchPhoto(
+                    file = photoFile,
+                    modifier = Modifier.fillMaxWidth().height(190.dp)
+                )
+                OutlinedTextField(
+                    dateTime,
+                    { dateTime = it },
+                    label = { Text("撮影日時") },
+                    supportingText = { Text("yyyy/MM/dd HH:mm") },
+                    isError = dateTime.isNotBlank() && parsedTime == null,
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    size,
+                    { size = it },
+                    label = { Text("サイズ (cm)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    isError = size.isNotBlank() && parsedSize == null,
+                    singleLine = true
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        latitude,
+                        { latitude = it },
+                        label = { Text("緯度") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = parsedLatitude == null || parsedLatitude !in -90.0..90.0,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        longitude,
+                        { longitude = it },
+                        label = { Text("経度") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = parsedLongitude == null || parsedLongitude !in -180.0..180.0,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                OutlinedTextField(
+                    memo,
+                    { memo = it },
+                    label = { Text("メモ") },
+                    minLines = 2,
+                    maxLines = 4
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = valid,
+                onClick = {
+                    onSave(
+                        initial.copy(
+                            time = parsedTime!!,
+                            latitude = parsedLatitude!!,
+                            longitude = parsedLongitude!!,
+                            size = parsedSize,
+                            memo = memo.trim()
+                        )
+                    )
+                }
+            ) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("キャンセル") }
+        }
+    )
+}
+
+@Composable
+private fun CatchPhoto(file: File?, modifier: Modifier = Modifier) {
+    val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, file) {
+        value = withContext(Dispatchers.IO) {
+            file?.takeIf { it.isFile }?.let { source ->
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(source.path, bounds)
+                var sample = 1
+                while (bounds.outWidth / sample > 1000 || bounds.outHeight / sample > 1000) {
+                    sample *= 2
+                }
+                BitmapFactory.decodeFile(
+                    source.path,
+                    BitmapFactory.Options().apply { inSampleSize = sample }
+                )?.asImageBitmap()
+            }
+        }
+    }
+    Surface(
+        modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = MaterialTheme.shapes.medium
+    ) {
+        image?.let {
+            Image(
+                bitmap = it,
+                contentDescription = "釣果写真",
+                modifier = Modifier.fillMaxSize().clip(MaterialTheme.shapes.medium),
+                contentScale = ContentScale.Crop
+            )
+        } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Icon(Icons.Default.HideImage, "写真なし", modifier = Modifier.size(48.dp))
+        }
+    }
 }
 
 @Composable

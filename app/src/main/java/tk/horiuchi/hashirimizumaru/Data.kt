@@ -23,7 +23,6 @@ data class CatchRecord(
     val time: Long = System.currentTimeMillis(),
     val latitude: Double,
     val longitude: Double,
-    val fish: String,
     val size: Double? = null,
     val photoUri: String? = null,
     val memo: String = ""
@@ -58,7 +57,8 @@ interface BoatDao {
 
     @Query("SELECT * FROM catches ORDER BY time DESC")
     fun catches(): Flow<List<CatchRecord>>
-    @Insert suspend fun saveCatch(value: CatchRecord)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveCatch(value: CatchRecord)
     @Delete suspend fun deleteCatch(value: CatchRecord)
 
     @Query("SELECT * FROM track_sessions ORDER BY startedAt DESC")
@@ -80,7 +80,7 @@ interface BoatDao {
 
 @Database(
     entities = [Waypoint::class, CatchRecord::class, TrackSession::class, TrackPoint::class],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -147,8 +147,36 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `catches_new` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `time` INTEGER NOT NULL,
+                        `latitude` REAL NOT NULL,
+                        `longitude` REAL NOT NULL,
+                        `size` REAL,
+                        `photoUri` TEXT,
+                        `memo` TEXT NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO `catches_new`
+                        (`id`, `time`, `latitude`, `longitude`, `size`, `photoUri`, `memo`)
+                    SELECT `id`, `time`, `latitude`, `longitude`, `size`, `photoUri`, `memo`
+                    FROM `catches`
+                    """.trimIndent()
+                )
+                db.execSQL("DROP TABLE `catches`")
+                db.execSQL("ALTER TABLE `catches_new` RENAME TO `catches`")
+            }
+        }
+
         fun create(context: Context) = Room.databaseBuilder(
             context, AppDatabase::class.java, "hashirimizumaru.db"
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }

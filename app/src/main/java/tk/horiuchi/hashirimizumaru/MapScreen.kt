@@ -2,6 +2,7 @@ package tk.horiuchi.hashirimizumaru
 
 import android.location.Location
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -10,6 +11,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -30,6 +32,10 @@ import org.maplibre.geojson.Point
 import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.math.cos
+import kotlin.math.floor
+import kotlin.math.log10
+import kotlin.math.pow
 
 private const val MIN_LAT = 35.235
 private const val MAX_LAT = 35.340
@@ -234,6 +240,22 @@ fun MapScreen(
                 Text("${tracks.size}点${if (recording) "・記録中" else ""}")
             })
         }
+        MapScaleBar(
+            latitude = savedMapCamera?.latitude
+                ?: location?.latitude
+                ?: 35.2708,
+            zoom = savedMapCamera?.zoom ?: 12.5,
+            modifier = Modifier
+                .align(Alignment.BottomStart)
+                .padding(
+                    start = 12.dp,
+                    bottom = when {
+                        pendingDestination != null -> 250.dp
+                        destination != null -> 180.dp
+                        else -> 82.dp
+                    }
+                )
+        )
     }
     if (addWaypoint && location != null) {
         WaypointEditor(
@@ -253,6 +275,82 @@ fun MapScreen(
         )
     }
 }
+
+@Composable
+private fun MapScaleBar(
+    latitude: Double,
+    zoom: Double,
+    modifier: Modifier = Modifier
+) {
+    val maximumWidth = 112.dp
+    val metersPerDp =
+        78271.51696 * cos(Math.toRadians(latitude)) / 2.0.pow(zoom)
+    val maximumMeters = maximumWidth.value * metersPerDp
+    val scaleMeters = niceScaleDistance(maximumMeters)
+    val barWidth = (scaleMeters / metersPerDp).toFloat().dp
+
+    Surface(
+        modifier = modifier,
+        color = Color(0xC906171E),
+        shape = MaterialTheme.shapes.small
+    ) {
+        Column(
+            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            horizontalAlignment = Alignment.Start
+        ) {
+            Text(
+                scaleDistanceText(scaleMeters),
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White
+            )
+            Canvas(Modifier.width(barWidth).height(9.dp)) {
+                val stroke = 2.dp.toPx()
+                val halfStroke = stroke / 2f
+                val y = halfStroke
+                drawLine(
+                    color = Color.White,
+                    start = androidx.compose.ui.geometry.Offset(halfStroke, y),
+                    end = androidx.compose.ui.geometry.Offset(size.width - halfStroke, y),
+                    strokeWidth = stroke,
+                    cap = StrokeCap.Square
+                )
+                drawLine(
+                    color = Color.White,
+                    start = androidx.compose.ui.geometry.Offset(halfStroke, y),
+                    end = androidx.compose.ui.geometry.Offset(halfStroke, size.height),
+                    strokeWidth = stroke
+                )
+                drawLine(
+                    color = Color.White,
+                    start = androidx.compose.ui.geometry.Offset(size.width - halfStroke, y),
+                    end = androidx.compose.ui.geometry.Offset(size.width - halfStroke, size.height),
+                    strokeWidth = stroke
+                )
+            }
+        }
+    }
+}
+
+private fun niceScaleDistance(maximumMeters: Double): Double {
+    if (!maximumMeters.isFinite() || maximumMeters <= 0.0) return 100.0
+    val magnitude = 10.0.pow(floor(log10(maximumMeters)))
+    val normalized = maximumMeters / magnitude
+    val nice = when {
+        normalized >= 5.0 -> 5.0
+        normalized >= 2.0 -> 2.0
+        else -> 1.0
+    }
+    return nice * magnitude
+}
+
+private fun scaleDistanceText(meters: Double): String =
+    if (meters >= 1000.0) {
+        val kilometers = meters / 1000.0
+        if (kilometers % 1.0 == 0.0) "${kilometers.toInt()} km"
+        else String.format(Locale.JAPAN, "%.1f km", kilometers)
+    } else {
+        "${meters.roundToInt()} m"
+    }
 
 @Composable
 private fun MapLibreView(
@@ -458,7 +556,8 @@ private fun mapStyle(
        "paint":{
          "line-color":["match",["get","Depth"],20,"#67E8F9",50,"#FBBF24",100,"#FB7185","#FFFFFF"],
          "line-width":["match",["get","Depth"],20,2.8,50,2.4,100,2.2,2.0],
-         "line-opacity":0.95
+         "line-opacity":0.95,
+         "line-dasharray":[2,1.5]
        }}""" else ""
     val waypointData = waypointGeoJson(waypoints, destinationId)
     val waypointSource = """,

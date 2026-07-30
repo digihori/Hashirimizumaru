@@ -1,9 +1,17 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
 }
+
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use(::load)
+}
+val msilSubscriptionKey = localProperties.getProperty("MSIL_SUBSCRIPTION_KEY", "")
 
 android {
     namespace = "tk.horiuchi.hashirimizumaru"
@@ -21,6 +29,7 @@ android {
             "PRIVACY_POLICY_URL",
             "\"https://raw.githubusercontent.com/digihori/Hashirimizumaru/main/PRIVACY.ja.md\""
         )
+        buildConfigField("String", "MSIL_SUBSCRIPTION_KEY", "\"$msilSubscriptionKey\"")
     }
     buildFeatures {
         compose = true
@@ -34,6 +43,18 @@ android {
         jvmTarget = "17"
     }
     packaging.resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+
+    sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/privacyAssets"))
+}
+
+val generatePrivacyAsset by tasks.registering(Copy::class) {
+    from(rootProject.file("PRIVACY.ja.md"))
+    into(layout.buildDirectory.dir("generated/privacyAssets"))
+    rename { "privacy_ja.md" }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(generatePrivacyAsset)
 }
 
 afterEvaluate {
@@ -63,6 +84,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.9.1")
     implementation("androidx.room:room-runtime:2.7.2")
     implementation("androidx.room:room-ktx:2.7.2")
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
     ksp("androidx.room:room-compiler:2.7.2")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.maplibre.gl:android-sdk:11.8.0")

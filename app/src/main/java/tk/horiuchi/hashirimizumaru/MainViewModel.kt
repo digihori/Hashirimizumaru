@@ -2,6 +2,7 @@ package tk.horiuchi.hashirimizumaru
 
 import android.app.Application
 import android.location.Location
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Job
@@ -22,6 +23,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val dao = (app as HashirimizumaruApp).database.dao()
     private val tracker = LocationTracker(app)
     private val contourRepository = ContourRepository(app)
+    private val catchPhotoRepository = CatchPhotoRepository(app)
     private val _contours = MutableStateFlow<ContourState>(ContourState.Idle)
     val contours = _contours.asStateFlow()
     val waypoints = dao.waypoints().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -38,7 +40,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val navigationStart = MutableStateFlow<NavigationStart?>(null)
     val powerSaving = MutableStateFlow(true)
     val recording = MutableStateFlow(false)
-    val showContours = MutableStateFlow(false)
+    val showContours = MutableStateFlow(true)
     val showSeaMarks = MutableStateFlow(true)
     val showTracks = MutableStateFlow(true)
     val followLocation = MutableStateFlow(true)
@@ -95,6 +97,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         dao.deleteWaypoint(value)
     }
     fun saveCatch(value: CatchRecord) = viewModelScope.launch { dao.saveCatch(value) }
+    fun deleteCatch(value: CatchRecord) = viewModelScope.launch {
+        dao.deleteCatch(value)
+        catchPhotoRepository.delete(value.photoUri)
+    }
+    suspend fun importCatchPhoto(
+        uri: Uri,
+        allowLocationMetadata: Boolean
+    ): ImportedCatchPhoto = catchPhotoRepository.import(uri, allowLocationMetadata)
+    fun catchPhotoFile(relativePath: String?) = catchPhotoRepository.file(relativePath)
+    fun discardCatchPhoto(relativePath: String?) = catchPhotoRepository.delete(relativePath)
     fun focusOnMap(waypoint: Waypoint) {
         mapFocus.value = MapFocus(waypoint, ++mapFocusRequestId)
     }
