@@ -105,6 +105,7 @@ private fun BoatApp(
     var menuOpen by remember { mutableStateOf(false) }
     var aboutOpen by remember { mutableStateOf(false) }
     var privacyOpen by remember { mutableStateOf(false) }
+    var backupOpen by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -219,6 +220,10 @@ private fun BoatApp(
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                         DropdownMenuItem(
+                            text = { Text("バックアップと復元") },
+                            onClick = { menuOpen = false; backupOpen = true }
+                        )
+                        DropdownMenuItem(
                             text = { Text("プライバシーポリシー") },
                             onClick = { menuOpen = false; privacyOpen = true }
                         )
@@ -299,6 +304,9 @@ private fun BoatApp(
     }
     if (privacyOpen) {
         PrivacyPolicyScreen(onClose = { privacyOpen = false })
+    }
+    if (backupOpen) {
+        BackupRestoreScreen(vm = vm, onClose = { backupOpen = false })
     }
     interruptedTrack?.let { session ->
         AlertDialog(

@@ -25,6 +25,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val tracker = LocationTracker(app)
     private val contourRepository = ContourRepository(app)
     private val catchPhotoRepository = CatchPhotoRepository(app)
+    private val backupRepository = BackupRepository(app, dao)
     private val _contours = MutableStateFlow<ContourState>(ContourState.Idle)
     val contours = _contours.asStateFlow()
     val waypoints = dao.waypoints().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -71,6 +72,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var recordingStartedByNavigation = false
     private val trackBuffer = mutableListOf<TrackPoint>()
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 1)
+
+    fun backupAllowed() = !recording.value && destination.value == null && pendingDestination.value == null
+    suspend fun backupSummary(): BackupSummary = backupRepository.summary()
+    suspend fun writeBackup(uri: Uri): BackupSummary {
+        check(backupAllowed()) { "ナビまたは航跡記録を終了してから実行してください" }
+        return backupRepository.write(uri)
+    }
+    suspend fun prepareRestore(uri: Uri): PreparedBackup {
+        check(backupAllowed()) { "ナビまたは航跡記録を終了してから実行してください" }
+        return backupRepository.prepare(uri)
+    }
+    suspend fun restoreBackup(value: PreparedBackup): BackupSummary {
+        check(backupAllowed()) { "ナビまたは航跡記録を終了してから実行してください" }
+        return backupRepository.restore(value)
+    }
 
     init {
         viewModelScope.launch {

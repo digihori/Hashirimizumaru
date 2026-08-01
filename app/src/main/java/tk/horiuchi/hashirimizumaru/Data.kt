@@ -49,17 +49,27 @@ data class TrackPoint(
 
 @Dao
 interface BoatDao {
+    @Query("SELECT * FROM waypoints ORDER BY id")
+    suspend fun waypointSnapshot(): List<Waypoint>
     @Query("SELECT * FROM waypoints ORDER BY updated DESC")
     fun waypoints(): Flow<List<Waypoint>>
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveWaypoint(value: Waypoint): Long
     @Delete suspend fun deleteWaypoint(value: Waypoint)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreWaypoints(values: List<Waypoint>)
+    @Query("DELETE FROM waypoints") suspend fun clearWaypoints()
 
     @Query("SELECT * FROM catches ORDER BY time DESC")
     fun catches(): Flow<List<CatchRecord>>
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveCatch(value: CatchRecord)
     @Delete suspend fun deleteCatch(value: CatchRecord)
+    @Query("SELECT * FROM catches ORDER BY id")
+    suspend fun catchSnapshot(): List<CatchRecord>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreCatches(values: List<CatchRecord>)
+    @Query("DELETE FROM catches") suspend fun clearCatches()
 
     @Query("SELECT * FROM track_sessions ORDER BY startedAt DESC")
     fun trackSessions(): Flow<List<TrackSession>>
@@ -70,6 +80,11 @@ interface BoatDao {
     @Insert suspend fun saveTrackSession(value: TrackSession): Long
     @Update suspend fun updateTrackSession(value: TrackSession)
     @Delete suspend fun deleteTrackSession(value: TrackSession)
+    @Query("SELECT * FROM track_sessions ORDER BY id")
+    suspend fun trackSessionSnapshot(): List<TrackSession>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreTrackSessions(values: List<TrackSession>)
+    @Query("DELETE FROM track_sessions") suspend fun clearTrackSessions()
 
     @Query("SELECT * FROM tracks ORDER BY time ASC")
     fun tracks(): Flow<List<TrackPoint>>
@@ -78,6 +93,22 @@ interface BoatDao {
     suspend fun deleteTracksForSession(sessionId: Long)
     @Query("DELETE FROM tracks")
     suspend fun clearTracks()
+    @Query("SELECT * FROM tracks ORDER BY id")
+    suspend fun trackSnapshot(): List<TrackPoint>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun restoreTracks(values: List<TrackPoint>)
+
+    @Transaction
+    suspend fun replaceAll(payload: BackupPayload) {
+        clearTracks()
+        clearTrackSessions()
+        clearCatches()
+        clearWaypoints()
+        if (payload.waypoints.isNotEmpty()) restoreWaypoints(payload.waypoints)
+        if (payload.trackSessions.isNotEmpty()) restoreTrackSessions(payload.trackSessions)
+        if (payload.tracks.isNotEmpty()) restoreTracks(payload.tracks)
+        if (payload.catches.isNotEmpty()) restoreCatches(payload.catches)
+    }
 }
 
 @Database(

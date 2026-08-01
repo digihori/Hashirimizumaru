@@ -12,15 +12,22 @@ val localProperties = Properties().apply {
     if (file.exists()) file.inputStream().use(::load)
 }
 val msilSubscriptionKey = localProperties.getProperty("MSIL_SUBSCRIPTION_KEY", "")
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties().apply {
+    if (keystorePropertiesFile.exists()) {
+        keystorePropertiesFile.inputStream().use(::load)
+    }
+}
 
 android {
     namespace = "tk.horiuchi.hashirimizumaru"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "tk.horiuchi.hashirimizumaru"
         minSdk = 26
-        targetSdk = 35
+        //noinspection EditedTargetSdkVersion
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -34,6 +41,36 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            create("release") {
+                storeFile = rootProject.file(
+                    requireNotNull(keystoreProperties.getProperty("storeFile")) {
+                        "keystore.properties に storeFile が必要です"
+                    }
+                )
+                storePassword = requireNotNull(keystoreProperties.getProperty("storePassword")) {
+                    "keystore.properties に storePassword が必要です"
+                }
+                keyAlias = requireNotNull(keystoreProperties.getProperty("keyAlias")) {
+                    "keystore.properties に keyAlias が必要です"
+                }
+                keyPassword = requireNotNull(keystoreProperties.getProperty("keyPassword")) {
+                    "keystore.properties に keyPassword が必要です"
+                }
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isDebuggable = false
+            isMinifyEnabled = false
+            isShrinkResources = false
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -88,5 +125,6 @@ dependencies {
     ksp("androidx.room:room-compiler:2.7.2")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.maplibre.gl:android-sdk:11.8.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

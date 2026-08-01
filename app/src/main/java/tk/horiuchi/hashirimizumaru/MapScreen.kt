@@ -3,6 +3,7 @@ package tk.horiuchi.hashirimizumaru
 import android.location.Location
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -12,6 +13,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.DefaultLifecycleObserver
@@ -258,6 +260,19 @@ fun MapScreen(
                     }
                 )
         )
+        MapAttribution(
+            showSeaMarks = showSeaMarks,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(
+                    end = 8.dp,
+                    bottom = when {
+                        pendingDestination != null -> 250.dp
+                        destination != null -> 180.dp
+                        else -> 76.dp
+                    }
+                )
+        )
     }
     if (addWaypoint && location != null) {
         WaypointEditor(
@@ -275,6 +290,44 @@ fun MapScreen(
                 mapWaypointLocation = null
             }
         )
+    }
+}
+
+@Composable
+private fun MapAttribution(
+    showSeaMarks: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val uriHandler = LocalUriHandler.current
+    Surface(
+        modifier = modifier,
+        color = Color(0xD906171E),
+        shape = MaterialTheme.shapes.extraSmall
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "© OpenStreetMap contributors",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White,
+                modifier = Modifier.clickable {
+                    uriHandler.openUri("https://www.openstreetmap.org/copyright")
+                }
+            )
+            if (showSeaMarks) {
+                Text(" / ", style = MaterialTheme.typography.labelSmall, color = Color.White)
+                Text(
+                    "OpenSeaMap",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    modifier = Modifier.clickable {
+                        uriHandler.openUri("https://www.openseamap.org/")
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -544,6 +597,7 @@ private fun mapStyle(
       "seamarks": {
         "type": "raster",
         "tiles": ["https://tiles.openseamap.org/seamark/{z}/{x}/{y}.png"],
+        "attribution": "OpenSeaMap",
         "tileSize": 256,
         "maxzoom": 18
       }""" else ""
@@ -613,7 +667,7 @@ private fun mapStyle(
     {"version":8,"name":"走水丸",
     "glyphs":"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
     "sources":{
-      "base":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":19},
+      "base":{"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"attribution":"© OpenStreetMap contributors","tileSize":256,"maxzoom":19},
       "current-location":{"type":"geojson","data":{"type":"FeatureCollection","features":[]}}
       $seamark
       $contourSource
