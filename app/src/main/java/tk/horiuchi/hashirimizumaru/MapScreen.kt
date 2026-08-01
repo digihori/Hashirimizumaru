@@ -34,6 +34,8 @@ import org.maplibre.geojson.Feature
 import org.maplibre.geojson.Point
 import org.json.JSONObject
 import java.util.Locale
+import java.text.DateFormat
+import java.util.Date
 import kotlin.math.roundToInt
 import kotlin.math.cos
 import kotlin.math.floor
@@ -69,6 +71,10 @@ fun MapScreen(
     val showContours by vm.showContours.collectAsStateWithLifecycle()
     val showTracks by vm.showTracks.collectAsStateWithLifecycle()
     val showTide by vm.showTide.collectAsStateWithLifecycle()
+    val showCatches by vm.showCatches.collectAsStateWithLifecycle()
+    val catches by vm.catches.collectAsStateWithLifecycle()
+    val selectedCatchId by vm.selectedCatchId.collectAsStateWithLifecycle()
+    val catchFocus by vm.catchFocus.collectAsStateWithLifecycle()
     val followLocation by vm.followLocation.collectAsStateWithLifecycle()
     val mapFocus by vm.mapFocus.collectAsStateWithLifecycle()
     val trackFocus by vm.trackFocus.collectAsStateWithLifecycle()
@@ -87,6 +93,8 @@ fun MapScreen(
             seaMarks = showSeaMarks,
             contourGeoJson = (contours as? ContourState.Ready)?.geoJson.takeIf { showContours },
             waypoints = waypoints,
+            catches = catches.takeIf { showCatches }.orEmpty(),
+            selectedCatchId = selectedCatchId,
             destinationId = destination?.id ?: pendingDestination?.id,
             navigationStart = navigationStart,
             navigationDestination = destination,
@@ -96,11 +104,14 @@ fun MapScreen(
             recenterRequest = recenterRequest,
             mapFocus = mapFocus,
             trackFocus = trackFocus,
+            catchFocus = catchFocus,
             savedCamera = savedMapCamera,
             onCameraChanged = vm::saveMapCamera,
             onFollowLocationChanged = { vm.followLocation.value = it },
             onMapFocusHandled = vm::consumeMapFocus,
             onTrackFocusHandled = vm::consumeTrackFocus,
+            onCatchFocusHandled = vm::consumeCatchFocus,
+            onCatchSelected = vm::selectCatchOnMap,
             onMapLongPress = { mapWaypointLocation = it }
         )
         Column(
@@ -140,6 +151,13 @@ fun MapScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Switch(showTide, { vm.showTide.value = it })
                             Text("タイドグラフ")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(showCatches, {
+                                vm.showCatches.value = it
+                                if (!it) vm.clearSelectedCatch()
+                            })
+                            Text("釣果")
                         }
                         if (showTide) {
                             Text(
@@ -247,6 +265,20 @@ fun MapScreen(
                     end = 12.dp,
                     bottom = 84.dp
                 )
+            )
+        }
+        selectedCatchId?.let { id -> catches.firstOrNull { it.id == id } }?.let { value ->
+            CatchMapCard(
+                value = value,
+                photoFile = vm.catchPhotoFile(value.photoUri),
+                onClose = vm::clearSelectedCatch,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(
+                        start = 12.dp,
+                        end = 12.dp,
+                        bottom = if (destination != null || pendingDestination != null) 190.dp else 82.dp
+                    )
             )
         }
         Row(
@@ -429,6 +461,8 @@ private fun MapLibreView(
     seaMarks: Boolean,
     contourGeoJson: String?,
     waypoints: List<Waypoint>,
+    catches: List<CatchRecord>,
+    selectedCatchId: Long?,
     destinationId: Long?,
     navigationStart: NavigationStart?,
     navigationDestination: Waypoint?,
@@ -438,11 +472,14 @@ private fun MapLibreView(
     recenterRequest: Int,
     mapFocus: MapFocus?,
     trackFocus: TrackFocus?,
+    catchFocus: CatchFocus?,
     savedCamera: MapCamera?,
     onCameraChanged: (Double, Double, Double) -> Unit,
     onFollowLocationChanged: (Boolean) -> Unit,
     onMapFocusHandled: (Long) -> Unit,
     onTrackFocusHandled: (Long) -> Unit,
+    onCatchFocusHandled: (Long) -> Unit,
+    onCatchSelected: (Long) -> Unit,
     onMapLongPress: (LatLng) -> Unit
 ) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -452,10 +489,13 @@ private fun MapLibreView(
     val currentFollowLocationHandler by rememberUpdatedState(onFollowLocationChanged)
     val currentFocusHandledHandler by rememberUpdatedState(onMapFocusHandled)
     val currentTrackFocusHandledHandler by rememberUpdatedState(onTrackFocusHandled)
+    val currentCatchFocusHandledHandler by rememberUpdatedState(onCatchFocusHandled)
+    val currentCatchSelectedHandler by rememberUpdatedState(onCatchSelected)
     var centeredOnFirstLocation by remember { mutableStateOf(savedCamera != null) }
     var handledRecenterRequest by remember { mutableIntStateOf(recenterRequest) }
     var handledMapFocusRequest by remember { mutableLongStateOf(0L) }
     var handledTrackFocusRequest by remember { mutableLongStateOf(0L) }
+    var handledCatchFocusRequest by remember { mutableLongStateOf(0L) }
     val updateLocationSource: (Style) -> Unit = { style ->
         location?.let { current ->
             style.getSourceAs<GeoJsonSource>("current-location")
@@ -470,6 +510,8 @@ private fun MapLibreView(
         seaMarks,
         contourGeoJson,
         waypoints,
+        catches,
+        selectedCatchId,
         destinationId,
         navigationStart,
         navigationDestination,
@@ -480,6 +522,8 @@ private fun MapLibreView(
             seaMarks,
             contourGeoJson,
             waypoints,
+            catches,
+            selectedCatchId,
             destinationId,
             navigationStart,
             navigationDestination,
@@ -514,6 +558,14 @@ private fun MapLibreView(
                             currentLongPressHandler(point)
                         }
                         true
+                    }
+                    map.addOnMapClickListener { point ->
+                        val screenPoint = map.projection.toScreenLocation(point)
+                        val feature = map.queryRenderedFeatures(screenPoint, "catch-markers").firstOrNull()
+                        feature?.getNumberProperty("id")?.toLong()?.let {
+                            currentCatchSelectedHandler(it)
+                            true
+                        } ?: false
                     }
                     map.addOnMoveListener(object : MapLibreMap.OnMoveListener {
                         override fun onMoveBegin(detector: MoveGestureDetector) {
@@ -582,6 +634,20 @@ private fun MapLibreView(
                     handledTrackFocusRequest = focus.requestId
                     currentTrackFocusHandledHandler(focus.requestId)
                 }
+                catchFocus?.takeIf { it.requestId != handledCatchFocusRequest }?.let { focus ->
+                    catches.firstOrNull { it.id == focus.catchId }?.let { value ->
+                        currentFollowLocationHandler(false)
+                        map.easeCamera(
+                            CameraUpdateFactory.newLatLngZoom(
+                                LatLng(value.latitude, value.longitude),
+                                maxOf(map.cameraPosition.zoom, 15.0)
+                            ),
+                            800
+                        )
+                    }
+                    handledCatchFocusRequest = focus.requestId
+                    currentCatchFocusHandledHandler(focus.requestId)
+                }
             }
         },
         modifier = Modifier.fillMaxSize()
@@ -603,6 +669,8 @@ private fun mapStyle(
     seaMarks: Boolean,
     contourGeoJson: String?,
     waypoints: List<Waypoint>,
+    catches: List<CatchRecord>,
+    selectedCatchId: Long?,
     destinationId: Long?,
     navigationStart: NavigationStart?,
     navigationDestination: Waypoint?,
@@ -634,6 +702,8 @@ private fun mapStyle(
     val waypointData = waypointGeoJson(waypoints, destinationId)
     val waypointSource = """,
       "waypoints":{"type":"geojson","data":$waypointData}"""
+    val catchSource = """,
+      "catches":{"type":"geojson","data":${catchGeoJson(catches, selectedCatchId)}}"""
     val trackSource = """,
       "tracks":{"type":"geojson","data":${trackGeoJson(trackPoints, activeTrackSessionId)}}"""
     val navigationSource = """,
@@ -679,6 +749,20 @@ private fun mapStyle(
          "text-halo-color":"#06171E",
          "text-halo-width":2
        }}"""
+    val catchLayers = """,
+      {"id":"catch-halo","type":"circle","source":"catches",
+       "filter":["==",["get","selected"],true],
+       "paint":{"circle-radius":13,"circle-color":"#06171E","circle-stroke-width":3,"circle-stroke-color":"#67E8F9"}},
+      {"id":"catch-markers","type":"circle","source":"catches",
+       "paint":{
+         "circle-radius":["case",["==",["get","selected"],true],9,7],
+         "circle-color":["case",["==",["get","selected"],true],"#67E8F9","#FBBF24"],
+         "circle-stroke-width":2,
+         "circle-stroke-color":"#06171E"
+       }},
+      {"id":"catch-labels","type":"symbol","source":"catches",
+       "layout":{"text-field":"釣","text-font":["Noto Sans Regular"],"text-size":10,"text-allow-overlap":true},
+       "paint":{"text-color":"#06171E"}}"""
     return """
     {"version":8,"name":"走水丸",
     "glyphs":"https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
@@ -688,6 +772,7 @@ private fun mapStyle(
       $seamark
       $contourSource
       $waypointSource
+      $catchSource
       $trackSource
       $navigationSource
     },"layers":[
@@ -698,6 +783,7 @@ private fun mapStyle(
       $trackLayers
       $navigationLayer
       $waypointLayers
+      $catchLayers
       ,{"id":"current-location-halo","type":"circle","source":"current-location",
         "paint":{"circle-radius":13,"circle-color":"#06171E","circle-opacity":0.75}},
       {"id":"current-location","type":"circle","source":"current-location",
@@ -771,6 +857,56 @@ private fun waypointGeoJson(waypoints: List<Waypoint>, destinationId: Long?): St
             """.trimIndent()
         }
     return """{"type":"FeatureCollection","features":[$features]}"""
+}
+
+private fun catchGeoJson(catches: List<CatchRecord>, selectedCatchId: Long?): String {
+    val features = catches
+        .filter { it.latitude in MIN_LAT..MAX_LAT && it.longitude in MIN_LON..MAX_LON }
+        .joinToString(",") { value ->
+            """
+            {
+              "type":"Feature",
+              "geometry":{"type":"Point","coordinates":[${value.longitude},${value.latitude}]},
+              "properties":{"id":${value.id},"selected":${value.id == selectedCatchId}}
+            }
+            """.trimIndent()
+        }
+    return """{"type":"FeatureCollection","features":[$features]}"""
+}
+
+@Composable
+private fun CatchMapCard(
+    value: CatchRecord,
+    photoFile: java.io.File?,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier,
+        color = Color(0xF20D2833),
+        shape = MaterialTheme.shapes.medium,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            Modifier.padding(8.dp).widthIn(max = 320.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CatchPhoto(photoFile, Modifier.size(64.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
+                        .format(Date(value.time)),
+                    style = MaterialTheme.typography.titleSmall
+                )
+                value.size?.let { Text("$it cm", style = MaterialTheme.typography.bodySmall) }
+                if (value.memo.isNotBlank()) {
+                    Text(value.memo, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                }
+            }
+            IconButton(onClick = onClose) { Icon(Icons.Default.Close, "閉じる") }
+        }
+    }
 }
 
 @Composable

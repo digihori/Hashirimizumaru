@@ -158,7 +158,7 @@ fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) 
 }
 
 @Composable
-fun CatchScreen(vm: MainViewModel) {
+fun CatchScreen(vm: MainViewModel, onShowOnMap: (CatchRecord) -> Unit) {
     val values by vm.catches.collectAsStateWithLifecycle()
     val location by vm.location.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -262,6 +262,9 @@ fun CatchScreen(vm: MainViewModel) {
                             IconButton(onClick = { editing = value }) {
                                 Icon(Icons.Default.Edit, "編集")
                             }
+                            IconButton(onClick = { onShowOnMap(value) }) {
+                                Icon(Icons.Default.Map, "地図で表示")
+                            }
                             IconButton(onClick = { deleting = value }) {
                                 Icon(Icons.Default.Delete, "削除")
                             }
@@ -301,6 +304,7 @@ fun CatchScreen(vm: MainViewModel) {
             photoFile = vm.catchPhotoFile(photo.relativePath),
             fallbackLatitude = location?.latitude ?: 35.2708,
             fallbackLongitude = location?.longitude ?: 139.7305,
+            currentLocation = location,
             onDismiss = {
                 vm.discardCatchPhoto(photo.relativePath)
                 importedPhoto = null
@@ -315,6 +319,7 @@ fun CatchScreen(vm: MainViewModel) {
         CatchRecordEditor(
             initial = value,
             photoFile = vm.catchPhotoFile(value.photoUri),
+            currentLocation = location,
             onDismiss = { editing = null },
             onSave = {
                 vm.saveCatch(it)
@@ -568,6 +573,7 @@ private fun CatchEditor(
     photoFile: File?,
     fallbackLatitude: Double,
     fallbackLongitude: Double,
+    currentLocation: Location?,
     onDismiss: () -> Unit,
     onSave: (CatchRecord) -> Unit
 ) {
@@ -632,6 +638,19 @@ private fun CatchEditor(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                OutlinedButton(
+                    onClick = {
+                        currentLocation?.let {
+                            latitude = String.format(Locale.US, "%.6f", it.latitude)
+                            longitude = String.format(Locale.US, "%.6f", it.longitude)
+                        }
+                    },
+                    enabled = currentLocation != null
+                ) {
+                    Icon(Icons.Default.MyLocation, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(currentLocation?.let { "現在地を入力（±${it.accuracy.roundToInt()}m）" } ?: "現在地未取得")
+                }
                 Text(
                     if (photo.latitude != null && photo.longitude != null) {
                         "位置を写真から取得"
@@ -672,6 +691,7 @@ private fun CatchEditor(
 private fun CatchRecordEditor(
     initial: CatchRecord,
     photoFile: File?,
+    currentLocation: Location?,
     onDismiss: () -> Unit,
     onSave: (CatchRecord) -> Unit
 ) {
@@ -744,6 +764,19 @@ private fun CatchRecordEditor(
                         modifier = Modifier.weight(1f)
                     )
                 }
+                OutlinedButton(
+                    onClick = {
+                        currentLocation?.let {
+                            latitude = String.format(Locale.US, "%.6f", it.latitude)
+                            longitude = String.format(Locale.US, "%.6f", it.longitude)
+                        }
+                    },
+                    enabled = currentLocation != null
+                ) {
+                    Icon(Icons.Default.MyLocation, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text(currentLocation?.let { "現在地を入力（±${it.accuracy.roundToInt()}m）" } ?: "現在地未取得")
+                }
                 OutlinedTextField(
                     memo,
                     { memo = it },
@@ -776,7 +809,7 @@ private fun CatchRecordEditor(
 }
 
 @Composable
-private fun CatchPhoto(file: File?, modifier: Modifier = Modifier) {
+fun CatchPhoto(file: File?, modifier: Modifier = Modifier) {
     val image by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, file) {
         value = withContext(Dispatchers.IO) {
             file?.takeIf { it.isFile }?.let { source ->

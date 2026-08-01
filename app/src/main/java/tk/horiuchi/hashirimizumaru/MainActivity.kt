@@ -290,7 +290,13 @@ private fun BoatApp(
                         tab = AppTab.MAP
                     }
                 )
-                AppTab.CATCHES -> CatchScreen(vm)
+                AppTab.CATCHES -> CatchScreen(
+                    vm = vm,
+                    onShowOnMap = { value ->
+                        vm.focusCatchOnMap(value)
+                        tab = AppTab.MAP
+                    }
+                )
             }
         }
     }

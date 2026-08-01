@@ -17,6 +17,7 @@ data class NavInfo(val distanceMeters: Float, val bearing: Float)
 data class MapFocus(val waypoint: Waypoint, val requestId: Long)
 data class MapCamera(val latitude: Double, val longitude: Double, val zoom: Double)
 data class TrackFocus(val sessionId: Long, val requestId: Long)
+data class CatchFocus(val catchId: Long, val requestId: Long)
 data class NavigationStart(val latitude: Double, val longitude: Double)
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -46,11 +47,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val showSeaMarks = MutableStateFlow(true)
     val showTracks = MutableStateFlow(true)
     val showTide = MutableStateFlow(true)
+    val showCatches = MutableStateFlow(true)
     val followLocation = MutableStateFlow(true)
     val mapFocus = MutableStateFlow<MapFocus?>(null)
     val mapCamera = MutableStateFlow<MapCamera?>(null)
     val selectedTrackSessionId = MutableStateFlow<Long?>(null)
     val trackFocus = MutableStateFlow<TrackFocus?>(null)
+    val catchFocus = MutableStateFlow<CatchFocus?>(null)
+    val selectedCatchId = MutableStateFlow<Long?>(null)
     val interruptedTrackSession = MutableStateFlow<TrackSession?>(null)
     private val bufferedTracks = MutableStateFlow<List<TrackPoint>>(emptyList())
     val allTrackPoints = combine(tracks, bufferedTracks) { saved, buffered ->
@@ -68,6 +72,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private var mapFocusRequestId = 0L
     private var trackFocusRequestId = 0L
+    private var catchFocusRequestId = 0L
     private var bufferJob: Job? = null
     private var currentRecordingSession: TrackSession? = null
     private var recordingStartedByNavigation = false
@@ -163,6 +168,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun saveCatch(value: CatchRecord) = viewModelScope.launch { dao.saveCatch(value) }
     fun deleteCatch(value: CatchRecord) = viewModelScope.launch {
+        if (selectedCatchId.value == value.id) clearSelectedCatch()
         dao.deleteCatch(value)
         catchPhotoRepository.delete(value.photoUri)
     }
@@ -172,6 +178,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ): ImportedCatchPhoto = catchPhotoRepository.import(uri, allowLocationMetadata)
     fun catchPhotoFile(relativePath: String?) = catchPhotoRepository.file(relativePath)
     fun discardCatchPhoto(relativePath: String?) = catchPhotoRepository.delete(relativePath)
+    fun focusCatchOnMap(value: CatchRecord) {
+        showCatches.value = true
+        selectedCatchId.value = value.id
+        catchFocus.value = CatchFocus(value.id, ++catchFocusRequestId)
+        followLocation.value = false
+    }
+    fun selectCatchOnMap(id: Long) { selectedCatchId.value = id }
+    fun clearSelectedCatch() { selectedCatchId.value = null }
+    fun consumeCatchFocus(requestId: Long) {
+        if (catchFocus.value?.requestId == requestId) catchFocus.value = null
+    }
     fun focusOnMap(waypoint: Waypoint) {
         mapFocus.value = MapFocus(waypoint, ++mapFocusRequestId)
     }
