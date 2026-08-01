@@ -127,4 +127,5 @@ dependencies {
     implementation("org.maplibre.gl:android-sdk:11.8.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

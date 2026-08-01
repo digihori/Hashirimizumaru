@@ -45,6 +45,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val showContours = MutableStateFlow(true)
     val showSeaMarks = MutableStateFlow(true)
     val showTracks = MutableStateFlow(true)
+    val showTide = MutableStateFlow(true)
     val followLocation = MutableStateFlow(true)
     val mapFocus = MutableStateFlow<MapFocus?>(null)
     val mapCamera = MutableStateFlow<MapCamera?>(null)

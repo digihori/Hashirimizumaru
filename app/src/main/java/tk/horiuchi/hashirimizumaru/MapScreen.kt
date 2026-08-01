@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalUriHandler
@@ -67,6 +68,7 @@ fun MapScreen(
     val showSeaMarks by vm.showSeaMarks.collectAsStateWithLifecycle()
     val showContours by vm.showContours.collectAsStateWithLifecycle()
     val showTracks by vm.showTracks.collectAsStateWithLifecycle()
+    val showTide by vm.showTide.collectAsStateWithLifecycle()
     val followLocation by vm.followLocation.collectAsStateWithLifecycle()
     val mapFocus by vm.mapFocus.collectAsStateWithLifecycle()
     val trackFocus by vm.trackFocus.collectAsStateWithLifecycle()
@@ -102,7 +104,10 @@ fun MapScreen(
             onMapLongPress = { mapWaypointLocation = it }
         )
         Column(
-            Modifier.align(Alignment.TopStart).padding(12.dp),
+            Modifier
+                .align(Alignment.TopStart)
+                .padding(12.dp)
+                .zIndex(2f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             AssistChip(
@@ -131,6 +136,16 @@ fun MapScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Switch(showTracks, { vm.showTracks.value = it })
                             Text("航跡")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Switch(showTide, { vm.showTide.value = it })
+                            Text("タイドグラフ")
+                        }
+                        if (showTide) {
+                            Text(
+                                "海上保安庁の横須賀調和定数による推算値。航行判断には使用しないでください",
+                                style = MaterialTheme.typography.labelSmall
+                            )
                         }
                         if (showContours) {
                             when (val state = contours) {
@@ -205,6 +220,7 @@ fun MapScreen(
                     )
                 }
             }
+            if (showTide) TidePanel()
         }
         if (destination != null && nav != null) {
             NavigationPanel(
@@ -337,7 +353,7 @@ private fun MapScaleBar(
     zoom: Double,
     modifier: Modifier = Modifier
 ) {
-    val maximumWidth = 112.dp
+    val maximumWidth = 56.dp
     val metersPerDp =
         78271.51696 * cos(Math.toRadians(latitude)) / 2.0.pow(zoom)
     val maximumMeters = maximumWidth.value * metersPerDp
@@ -350,16 +366,16 @@ private fun MapScaleBar(
         shape = MaterialTheme.shapes.small
     ) {
         Column(
-            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+            Modifier.padding(horizontal = 4.dp, vertical = 3.dp),
             horizontalAlignment = Alignment.Start
         ) {
             Text(
                 scaleDistanceText(scaleMeters),
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelSmall,
                 color = Color.White
             )
-            Canvas(Modifier.width(barWidth).height(9.dp)) {
-                val stroke = 2.dp.toPx()
+            Canvas(Modifier.width(barWidth).height(5.dp)) {
+                val stroke = 1.dp.toPx()
                 val halfStroke = stroke / 2f
                 val y = halfStroke
                 drawLine(
