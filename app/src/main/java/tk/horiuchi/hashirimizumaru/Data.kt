@@ -14,7 +14,8 @@ data class Waypoint(
     val latitude: Double,
     val longitude: Double,
     val created: Long = System.currentTimeMillis(),
-    val updated: Long = System.currentTimeMillis()
+    val updated: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0
 )
 
 @Entity(tableName = "catches")
@@ -49,12 +50,21 @@ data class TrackPoint(
 
 @Dao
 interface BoatDao {
-    @Query("SELECT * FROM waypoints ORDER BY id")
+    @Query("SELECT * FROM waypoints ORDER BY sortOrder ASC, id ASC")
     suspend fun waypointSnapshot(): List<Waypoint>
-    @Query("SELECT * FROM waypoints ORDER BY updated DESC")
+    @Query("SELECT * FROM waypoints ORDER BY sortOrder ASC, id ASC")
     fun waypoints(): Flow<List<Waypoint>>
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveWaypoint(value: Waypoint): Long
+    @Query("UPDATE waypoints SET sortOrder = sortOrder + 1")
+    suspend fun shiftWaypointOrder()
+    @Update
+    suspend fun updateWaypoints(values: List<Waypoint>)
+    @Transaction
+    suspend fun insertWaypointAtTop(value: Waypoint): Long {
+        shiftWaypointOrder()
+        return saveWaypoint(value.copy(sortOrder = 0))
+    }
     @Delete suspend fun deleteWaypoint(value: Waypoint)
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun restoreWaypoints(values: List<Waypoint>)
@@ -113,7 +123,7 @@ interface BoatDao {
 
 @Database(
     entities = [Waypoint::class, CatchRecord::class, TrackSession::class, TrackPoint::class],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -208,8 +218,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE `waypoints` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execSQL(
+                    """
+                    UPDATE `waypoints`
+                    SET `sortOrder` = (
+                        SELECT COUNT(*) FROM `waypoints` AS newer
+                        WHERE newer.`updated` > `waypoints`.`updated`
+                           OR (newer.`updated` = `waypoints`.`updated` AND newer.`id` > `waypoints`.`id`)
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+
         fun create(context: Context) = Room.databaseBuilder(
             context, AppDatabase::class.java, "hashirimizumaru.db"
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
     }
 }

@@ -120,9 +120,10 @@ class BackupRepository(
             require(json.keys.containsAll(JSON_FILES)) { "必要なデータがありません" }
             val manifest = JSONObject(json.getValue(MANIFEST).decodeToString())
             require(manifest.getString("format") == "hashirimizumaru-backup") { "走水丸のバックアップではありません" }
-            require(manifest.getInt("formatVersion") == FORMAT_VERSION) { "未対応のバックアップ形式です" }
+            val formatVersion = manifest.getInt("formatVersion")
+            require(formatVersion in 1..FORMAT_VERSION) { "未対応のバックアップ形式です" }
             val payload = BackupPayload(
-                parseWaypoints(JSONArray(json.getValue(WAYPOINTS).decodeToString())),
+                parseWaypoints(JSONArray(json.getValue(WAYPOINTS).decodeToString()), formatVersion),
                 parseSessions(JSONArray(json.getValue(SESSIONS).decodeToString())),
                 parseTracks(JSONArray(json.getValue(TRACKS).decodeToString())),
                 parseCatches(JSONArray(json.getValue(CATCHES).decodeToString()))
@@ -190,7 +191,9 @@ class BackupRepository(
 
     private fun validate(value: BackupPayload) {
         fun validCoordinate(lat: Double, lon: Double) = lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
-        require(value.waypoints.distinctBy { it.id }.size == value.waypoints.size && value.waypoints.all { it.id > 0 && validCoordinate(it.latitude, it.longitude) }) { "ポイントデータが不正です" }
+        require(value.waypoints.distinctBy { it.id }.size == value.waypoints.size &&
+            value.waypoints.distinctBy { it.sortOrder }.size == value.waypoints.size &&
+            value.waypoints.all { it.id > 0 && it.sortOrder >= 0 && validCoordinate(it.latitude, it.longitude) }) { "ポイントデータが不正です" }
         require(value.trackSessions.distinctBy { it.id }.size == value.trackSessions.size && value.trackSessions.all { it.id > 0 }) { "航跡データが不正です" }
         val sessionIds = value.trackSessions.map { it.id }.toSet()
         require(value.tracks.size <= MAX_TRACK_POINTS && value.tracks.distinctBy { it.id }.size == value.tracks.size && value.tracks.all { it.id > 0 && it.sessionId in sessionIds && validCoordinate(it.latitude, it.longitude) }) { "航跡座標が不正です" }
@@ -201,11 +204,11 @@ class BackupRepository(
     private fun manifest(s: BackupSummary) = JSONObject().put("format", "hashirimizumaru-backup").put("formatVersion", FORMAT_VERSION).put("appVersion", BuildConfig.VERSION_NAME).put("createdAt", s.createdAt).put("waypoints", s.waypointCount).put("trackSessions", s.trackSessionCount).put("trackPoints", s.trackPointCount).put("catches", s.catchCount).put("photos", s.photoCount)
     private fun putJson(zip: ZipOutputStream, name: String, value: Any) { zip.putNextEntry(ZipEntry(name)); zip.write(value.toString().toByteArray()); zip.closeEntry() }
 
-    private fun waypointsJson(values: List<Waypoint>) = JSONArray().apply { values.forEach { put(JSONObject().put("id",it.id).put("name",it.name).put("memo",it.memo).put("latitude",it.latitude).put("longitude",it.longitude).put("created",it.created).put("updated",it.updated)) } }
+    private fun waypointsJson(values: List<Waypoint>) = JSONArray().apply { values.forEach { put(JSONObject().put("id",it.id).put("name",it.name).put("memo",it.memo).put("latitude",it.latitude).put("longitude",it.longitude).put("created",it.created).put("updated",it.updated).put("sortOrder",it.sortOrder)) } }
     private fun sessionsJson(values: List<TrackSession>) = JSONArray().apply { values.forEach { put(JSONObject().put("id",it.id).put("name",it.name).put("memo",it.memo).put("startedAt",it.startedAt).put("endedAt",it.endedAt ?: JSONObject.NULL).put("startedByNavigation",it.startedByNavigation)) } }
     private fun tracksJson(values: List<TrackPoint>) = JSONArray().apply { values.forEach { put(JSONObject().put("id",it.id).put("sessionId",it.sessionId).put("time",it.time).put("latitude",it.latitude).put("longitude",it.longitude)) } }
     private fun catchesJson(values: List<CatchRecord>) = JSONArray().apply { values.forEach { put(JSONObject().put("id",it.id).put("time",it.time).put("latitude",it.latitude).put("longitude",it.longitude).put("size",it.size ?: JSONObject.NULL).put("photoUri",it.photoUri ?: JSONObject.NULL).put("memo",it.memo)) } }
-    private fun parseWaypoints(a: JSONArray)=a.objects { Waypoint(it.getLong("id"),it.getString("name"),it.getString("memo"),it.getDouble("latitude"),it.getDouble("longitude"),it.getLong("created"),it.getLong("updated")) }
+    private fun parseWaypoints(a: JSONArray, formatVersion: Int)=List(a.length()) { index -> a.getJSONObject(index).let { Waypoint(it.getLong("id"),it.getString("name"),it.getString("memo"),it.getDouble("latitude"),it.getDouble("longitude"),it.getLong("created"),it.getLong("updated"),if(formatVersion >= 2) it.getInt("sortOrder") else index) } }
     private fun parseSessions(a: JSONArray)=a.objects { TrackSession(it.getLong("id"),it.getString("name"),it.getString("memo"),it.getLong("startedAt"),it.optLongOrNull("endedAt"),it.getBoolean("startedByNavigation")) }
     private fun parseTracks(a: JSONArray)=a.objects { TrackPoint(it.getLong("id"),it.getLong("sessionId"),it.getLong("time"),it.getDouble("latitude"),it.getDouble("longitude")) }
     private fun parseCatches(a: JSONArray)=a.objects { CatchRecord(it.getLong("id"),it.getLong("time"),it.getDouble("latitude"),it.getDouble("longitude"),it.optDoubleOrNull("size"),it.optStringOrNull("photoUri"),it.getString("memo")) }
@@ -213,7 +216,7 @@ class BackupRepository(
     companion object {
         const val MIME = "application/zip"
         fun defaultFileName() = "hashirimizumaru_${SimpleDateFormat("yyyyMMdd_HHmm", Locale.JAPAN).format(Date())}.hmbak"
-        private const val FORMAT_VERSION = 1
+        private const val FORMAT_VERSION = 2
         private const val MANIFEST="manifest.json"; private const val WAYPOINTS="waypoints.json"; private const val SESSIONS="track_sessions.json"; private const val TRACKS="tracks.json"; private const val CATCHES="catches.json"
         private val JSON_FILES=setOf(MANIFEST,WAYPOINTS,SESSIONS,TRACKS,CATCHES)
         private const val MAX_JSON_BYTES=100L*1024*1024; private const val MAX_PHOTO_BYTES=25L*1024*1024; private const val MAX_EXPANDED_BYTES=500L*1024*1024; private const val MAX_TRACK_POINTS=1_000_000

@@ -18,3 +18,11 @@ captures/
 *.jks
 *.keystore
 keystore.properties
+
+# 配布用ビルド生成物
+*.apk
+*.aab
+app/release/
+
+# Kotlinのローカル生成物
+.kotlin/

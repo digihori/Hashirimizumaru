@@ -8,12 +8,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -21,12 +24,17 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
@@ -48,19 +56,45 @@ fun WaypointScreen(
 ) {
     val values by vm.waypoints.collectAsStateWithLifecycle()
     val location by vm.location.collectAsStateWithLifecycle()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    var displayedValues by remember { mutableStateOf<List<Waypoint>>(emptyList()) }
+    var draggedId by remember { mutableStateOf<Long?>(null) }
+    var dragPointerY by remember { mutableFloatStateOf(0f) }
+    var draggedOffsetY by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(values, draggedId) {
+        if (draggedId == null) displayedValues = values
+    }
     var editing by remember { mutableStateOf<Waypoint?>(null) }
     var deleting by remember { mutableStateOf<Waypoint?>(null) }
     Box(Modifier.fillMaxSize()) {
         if (values.isEmpty()) EmptyState("ポイントはまだありません", "地図画面の「ポイント」から現在地を登録できます")
         LazyColumn(
-            Modifier.fillMaxSize(),
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(12.dp, 12.dp, 12.dp, 88.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(values, key = { it.id }) { waypoint ->
+            items(displayedValues, key = { it.id }) { waypoint ->
+                val dragging = draggedId == waypoint.id
                 ElevatedCard(
                     onClick = { onShowOnMap(waypoint) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .animateItem()
+                        .zIndex(if (dragging) 1f else 0f)
+                        .graphicsLayer {
+                            if (dragging) {
+                                scaleX = 1.02f
+                                scaleY = 1.02f
+                                alpha = 0.92f
+                                translationY = draggedOffsetY
+                            }
+                        },
+                    elevation = CardDefaults.elevatedCardElevation(
+                        defaultElevation = if (dragging) 12.dp else 1.dp
+                    )
                 ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -78,6 +112,62 @@ fun WaypointScreen(
                         }
                         IconButton(onClick = { editing = waypoint }) { Icon(Icons.Default.Edit, "編集") }
                         IconButton(onClick = { deleting = waypoint }) { Icon(Icons.Default.Delete, "削除") }
+                        Icon(
+                            Icons.Default.DragHandle,
+                            "長押しして並べ替え",
+                            modifier = Modifier
+                                .size(44.dp)
+                                .padding(8.dp)
+                                .pointerInput(waypoint.id) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { position ->
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            draggedId = waypoint.id
+                                            draggedOffsetY = 0f
+                                            val item = listState.layoutInfo.visibleItemsInfo
+                                                .firstOrNull { it.key == waypoint.id }
+                                            dragPointerY = (item?.offset ?: 0) + position.y
+                                        },
+                                        onDragCancel = {
+                                            draggedId = null
+                                            draggedOffsetY = 0f
+                                            displayedValues = values
+                                        },
+                                        onDragEnd = {
+                                            vm.reorderWaypoints(displayedValues)
+                                            draggedId = null
+                                            draggedOffsetY = 0f
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragPointerY += amount.y
+                                            draggedOffsetY += amount.y
+                                            val visible = listState.layoutInfo.visibleItemsInfo
+                                            val target = visible.firstOrNull {
+                                                dragPointerY.toInt() in it.offset..(it.offset + it.size)
+                                            }
+                                            val from = displayedValues.indexOfFirst { it.id == draggedId }
+                                            val to = target?.key?.let { key ->
+                                                displayedValues.indexOfFirst { it.id == key }
+                                            } ?: -1
+                                            if (from >= 0 && to >= 0 && from != to) {
+                                                val targetSize = target?.size?.toFloat() ?: 0f
+                                                draggedOffsetY += if (to > from) -targetSize else targetSize
+                                                displayedValues = displayedValues.toMutableList().apply {
+                                                    add(to, removeAt(from))
+                                                }
+                                            }
+                                            val viewport = listState.layoutInfo
+                                            when {
+                                                dragPointerY < viewport.viewportStartOffset + 48 ->
+                                                    scope.launch { listState.scrollBy(-18f) }
+                                                dragPointerY > viewport.viewportEndOffset - 48 ->
+                                                    scope.launch { listState.scrollBy(18f) }
+                                            }
+                                        }
+                                    )
+                                }
+                        )
                     }
                 }
             }
@@ -94,6 +184,7 @@ fun WaypointScreen(
     editing?.let { value ->
         WaypointEditor(
             initial = value,
+            currentLocation = location,
             onDismiss = { editing = null },
             onSave = { vm.saveWaypoint(it); editing = null }
         )
@@ -112,30 +203,38 @@ fun WaypointScreen(
 }
 
 @Composable
-fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) -> Unit) {
+fun WaypointEditor(
+    initial: Waypoint,
+    currentLocation: Location?,
+    onDismiss: () -> Unit,
+    onSave: (Waypoint) -> Unit
+) {
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
     var name by remember(initial) { mutableStateOf(initial.name) }
     var memo by remember(initial) { mutableStateOf(initial.memo) }
-    var latitude by remember(initial) { mutableStateOf(initial.latitude.toString()) }
-    var longitude by remember(initial) { mutableStateOf(initial.longitude.toString()) }
-    val valid = name.isNotBlank() && latitude.toDoubleOrNull() != null && longitude.toDoubleOrNull() != null
+    var latitude by remember(initial) { mutableStateOf<Double?>(initial.latitude) }
+    var longitude by remember(initial) { mutableStateOf<Double?>(initial.longitude) }
+    val valid = name.isNotBlank() && latitude != null && longitude != null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial.id == 0L) "ポイントを追加" else "ポイントを編集") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = if (imeVisible) 220.dp else 430.dp)
+                    .verticalScroll(rememberScrollState())
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 OutlinedTextField(name, { name = it }, label = { Text("名前 *") }, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        latitude, { latitude = it }, label = { Text("緯度") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        longitude, { longitude = it }, label = { Text("経度") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                CoordinateInput(
+                    initialLatitude = initial.latitude,
+                    initialLongitude = initial.longitude,
+                    currentLocation = currentLocation,
+                    onValueChanged = { lat, lon -> latitude = lat; longitude = lon }
+                )
                 OutlinedTextField(memo, { memo = it }, label = { Text("メモ") }, minLines = 2)
             }
         },
@@ -146,8 +245,8 @@ fun WaypointEditor(initial: Waypoint, onDismiss: () -> Unit, onSave: (Waypoint) 
                     onSave(initial.copy(
                         name = name.trim(),
                         memo = memo.trim(),
-                        latitude = latitude.toDouble(),
-                        longitude = longitude.toDouble(),
+                        latitude = latitude!!,
+                        longitude = longitude!!,
                         updated = System.currentTimeMillis()
                     ))
                 }
@@ -580,15 +679,13 @@ private fun CatchEditor(
     val density = LocalDensity.current
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val time = photo.takenAt ?: System.currentTimeMillis()
-    var latitude by remember(photo) {
-        mutableStateOf((photo.latitude ?: fallbackLatitude).toString())
-    }
-    var longitude by remember(photo) {
-        mutableStateOf((photo.longitude ?: fallbackLongitude).toString())
-    }
+    val initialLatitude = photo.latitude ?: fallbackLatitude
+    val initialLongitude = photo.longitude ?: fallbackLongitude
+    var latitude by remember(photo) { mutableStateOf<Double?>(initialLatitude) }
+    var longitude by remember(photo) { mutableStateOf<Double?>(initialLongitude) }
     var size by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
-    val valid = latitude.toDoubleOrNull() != null && longitude.toDoubleOrNull() != null
+    val valid = latitude != null && longitude != null
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("写真から釣果を記録") },
@@ -622,35 +719,12 @@ private fun CatchEditor(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        latitude,
-                        { latitude = it },
-                        label = { Text("緯度") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        longitude,
-                        { longitude = it },
-                        label = { Text("経度") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                OutlinedButton(
-                    onClick = {
-                        currentLocation?.let {
-                            latitude = String.format(Locale.US, "%.6f", it.latitude)
-                            longitude = String.format(Locale.US, "%.6f", it.longitude)
-                        }
-                    },
-                    enabled = currentLocation != null
-                ) {
-                    Icon(Icons.Default.MyLocation, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(currentLocation?.let { "現在地を入力（±${it.accuracy.roundToInt()}m）" } ?: "現在地未取得")
-                }
+                CoordinateInput(
+                    initialLatitude = initialLatitude,
+                    initialLongitude = initialLongitude,
+                    currentLocation = currentLocation,
+                    onValueChanged = { lat, lon -> latitude = lat; longitude = lon }
+                )
                 Text(
                     if (photo.latitude != null && photo.longitude != null) {
                         "位置を写真から取得"
@@ -674,8 +748,8 @@ private fun CatchEditor(
                 onClick = {
                     onSave(CatchRecord(
                         time = time,
-                        latitude = latitude.toDouble(),
-                        longitude = longitude.toDouble(),
+                        latitude = latitude!!,
+                        longitude = longitude!!,
                         size = size.toDoubleOrNull(),
                         photoUri = photo.relativePath,
                         memo = memo.trim()
@@ -699,19 +773,17 @@ private fun CatchRecordEditor(
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val dateFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN) }
     var dateTime by remember(initial) { mutableStateOf(dateFormat.format(Date(initial.time))) }
-    var latitude by remember(initial) { mutableStateOf(initial.latitude.toString()) }
-    var longitude by remember(initial) { mutableStateOf(initial.longitude.toString()) }
+    var latitude by remember(initial) { mutableStateOf<Double?>(initial.latitude) }
+    var longitude by remember(initial) { mutableStateOf<Double?>(initial.longitude) }
     var size by remember(initial) { mutableStateOf(initial.size?.toString().orEmpty()) }
     var memo by remember(initial) { mutableStateOf(initial.memo) }
     val parsedTime = runCatching {
         dateFormat.apply { isLenient = false }.parse(dateTime)?.time
     }.getOrNull()
-    val parsedLatitude = latitude.toDoubleOrNull()
-    val parsedLongitude = longitude.toDoubleOrNull()
     val parsedSize = size.toDoubleOrNull()
     val valid = parsedTime != null &&
-        parsedLatitude != null && parsedLatitude in -90.0..90.0 &&
-        parsedLongitude != null && parsedLongitude in -180.0..180.0 &&
+        latitude != null &&
+        longitude != null &&
         (size.isBlank() || parsedSize != null)
 
     AlertDialog(
@@ -746,37 +818,12 @@ private fun CatchRecordEditor(
                     isError = size.isNotBlank() && parsedSize == null,
                     singleLine = true
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(
-                        latitude,
-                        { latitude = it },
-                        label = { Text("緯度") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        isError = parsedLatitude == null || parsedLatitude !in -90.0..90.0,
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        longitude,
-                        { longitude = it },
-                        label = { Text("経度") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                        isError = parsedLongitude == null || parsedLongitude !in -180.0..180.0,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                OutlinedButton(
-                    onClick = {
-                        currentLocation?.let {
-                            latitude = String.format(Locale.US, "%.6f", it.latitude)
-                            longitude = String.format(Locale.US, "%.6f", it.longitude)
-                        }
-                    },
-                    enabled = currentLocation != null
-                ) {
-                    Icon(Icons.Default.MyLocation, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text(currentLocation?.let { "現在地を入力（±${it.accuracy.roundToInt()}m）" } ?: "現在地未取得")
-                }
+                CoordinateInput(
+                    initialLatitude = initial.latitude,
+                    initialLongitude = initial.longitude,
+                    currentLocation = currentLocation,
+                    onValueChanged = { lat, lon -> latitude = lat; longitude = lon }
+                )
                 OutlinedTextField(
                     memo,
                     { memo = it },
@@ -793,8 +840,8 @@ private fun CatchRecordEditor(
                     onSave(
                         initial.copy(
                             time = parsedTime!!,
-                            latitude = parsedLatitude!!,
-                            longitude = parsedLongitude!!,
+                            latitude = latitude!!,
+                            longitude = longitude!!,
                             size = parsedSize,
                             memo = memo.trim()
                         )

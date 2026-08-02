@@ -160,7 +160,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun stopLocation() = tracker.stop()
     fun togglePowerSaving() { powerSaving.value = !powerSaving.value; restartLocation() }
 
-    fun saveWaypoint(value: Waypoint) = viewModelScope.launch { dao.saveWaypoint(value) }
+    fun saveWaypoint(value: Waypoint) = viewModelScope.launch {
+        if (value.id == 0L) dao.insertWaypointAtTop(value) else dao.saveWaypoint(value)
+    }
+    fun reorderWaypoints(values: List<Waypoint>) = viewModelScope.launch {
+        dao.updateWaypoints(values.mapIndexed { index, value -> value.copy(sortOrder = index) })
+    }
     fun deleteWaypoint(value: Waypoint) = viewModelScope.launch {
         if (destination.value?.id == value.id) stopNavigation()
         if (pendingDestination.value?.id == value.id) cancelNavigationPreview()

@@ -325,6 +325,7 @@ fun MapScreen(
     if (addWaypoint && location != null) {
         WaypointEditor(
             initial = Waypoint(name = "", latitude = location!!.latitude, longitude = location!!.longitude),
+            currentLocation = location,
             onDismiss = { addWaypoint = false },
             onSave = { vm.saveWaypoint(it); addWaypoint = false }
         )
@@ -332,6 +333,7 @@ fun MapScreen(
     mapWaypointLocation?.let { point ->
         WaypointEditor(
             initial = Waypoint(name = "", latitude = point.latitude, longitude = point.longitude),
+            currentLocation = location,
             onDismiss = { mapWaypointLocation = null },
             onSave = {
                 vm.saveWaypoint(it)
