@@ -158,7 +158,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun startLocation() = tracker.start(powerSaving.value)
     fun restartLocation() { tracker.stop(); tracker.start(powerSaving.value) }
     fun stopLocation() = tracker.stop()
-    fun togglePowerSaving() { powerSaving.value = !powerSaving.value; restartLocation() }
+    fun togglePowerSaving() {
+        powerSaving.value = !powerSaving.value
+        restartLocation()
+        messages.tryEmit(
+            if (powerSaving.value) "省電力モードに切り替えました"
+            else "高精度モードに切り替えました"
+        )
+    }
 
     fun saveWaypoint(value: Waypoint) = viewModelScope.launch {
         if (value.id == 0L) dao.insertWaypointAtTop(value) else dao.saveWaypoint(value)
@@ -222,7 +229,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             messages.tryEmit("ナビ中は航跡記録を停止できません。先にナビを終了してください")
             return
         }
-        if (recording.value) stopRecording() else startRecording(startedByNavigation = false)
+        if (recording.value) {
+            stopRecording()
+            messages.tryEmit("航跡記録を終了しました")
+        } else {
+            startRecording(startedByNavigation = false)
+            messages.tryEmit("航跡記録を開始しました")
+        }
     }
 
     private fun startRecording(startedByNavigation: Boolean) {

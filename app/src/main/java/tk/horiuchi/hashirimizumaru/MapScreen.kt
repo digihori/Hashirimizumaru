@@ -191,7 +191,14 @@ fun MapScreen(
                                 }
                             }
                             Text(
-                                "海しるAPIを利用（海上保安庁による保証なし）",
+                                "出典：海洋状況表示システムを加工して作成",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+
+                            Text(
+                                "このサービスは、海しるAPIを利用して取得した情報をもとに" +
+                                        "作成しているが、サービスの内容は海上保安庁によって" +
+                                        "保証されたものではない",
                                 style = MaterialTheme.typography.labelSmall
                             )
                         }
@@ -206,8 +213,13 @@ fun MapScreen(
         ) {
             FilledTonalIconButton(
                 onClick = {
+                    val wasFollowing = vm.followLocation.value
                     vm.followLocation.value = true
                     recenterRequest++
+                    vm.messages.tryEmit(
+                        if (wasFollowing) "現在地を中央に表示しました"
+                        else "現在地追従を再開しました"
+                    )
                 },
                 enabled = location != null
             ) {
