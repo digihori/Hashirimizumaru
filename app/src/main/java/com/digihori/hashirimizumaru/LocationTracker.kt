@@ -1,4 +1,4 @@
-package tk.horiuchi.hashirimizumaru
+package com.digihori.hashirimizumaru
 
 import android.annotation.SuppressLint
 import android.content.Context

@@ -1,4 +1,4 @@
-package tk.horiuchi.hashirimizumaru
+package com.digihori.hashirimizumaru
 
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult

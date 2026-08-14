@@ -1,4 +1,4 @@
-package tk.horiuchi.hashirimizumaru
+package com.digihori.hashirimizumaru
 
 import android.Manifest
 import android.content.pm.PackageManager

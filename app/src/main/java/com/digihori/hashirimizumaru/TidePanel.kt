@@ -1,4 +1,4 @@
-package tk.horiuchi.hashirimizumaru
+package com.digihori.hashirimizumaru
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*

@@ -5,7 +5,7 @@
 | 項目 | 内容 |
 |---|---|
 | アプリ名 | 走水丸 〜横須賀ボートフィッシングナビ〜 |
-| パッケージ名 | `tk.horiuchi.hashirimizumaru` |
+| パッケージ名 | `com.digihori.hashirimizumaru` |
 | 対象バージョン | 1.0.0 |
 | 対応OS | Android 8.0（API 26）以上 |
 | データベース | Room Database Version 5 |

@@ -8,7 +8,7 @@
 2. Gradle Syncを実行
 3. 位置情報を利用できる実機またはエミュレーターで `app` を実行
 
-パッケージ名は `tk.horiuchi.hashirimizumaru`、最小AndroidバージョンはAndroid 8.0
+パッケージ名は `com.digihori.hashirimizumaru`、最小AndroidバージョンはAndroid 8.0
 （API 26）です。
 
 ## 実装済み

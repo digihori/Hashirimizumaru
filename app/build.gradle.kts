@@ -20,11 +20,11 @@ val keystoreProperties = Properties().apply {
 }
 
 android {
-    namespace = "tk.horiuchi.hashirimizumaru"
+    namespace = "com.digihori.hashirimizumaru"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "tk.horiuchi.hashirimizumaru"
+        applicationId = "com.digihori.hashirimizumaru"
         minSdk = 26
         //noinspection EditedTargetSdkVersion
         targetSdk = 36
