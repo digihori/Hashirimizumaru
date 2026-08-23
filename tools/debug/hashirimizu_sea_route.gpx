@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1"
+     creator="Hashirimizumaru"
+     xmlns="http://www.topografix.com/GPX/1/1"
+     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:schemaLocation="http://www.topografix.com/GPX/1/1 http://www.topografix.com/GPX/1/1/gpx.xsd">
+  <metadata>
+    <name>Hashirimizu sea test route</name>
+  </metadata>
+  <trk>
+    <name>Hashirimizu sea test route</name>
+    <trkseg>
+      <trkpt lat="35.271000" lon="139.735000"><ele>0</ele><time>2026-01-01T00:00:00Z</time></trkpt>
+      <trkpt lat="35.272000" lon="139.739000"><ele>0</ele><time>2026-01-01T00:00:15Z</time></trkpt>
+      <trkpt lat="35.273500" lon="139.743000"><ele>0</ele><time>2026-01-01T00:00:30Z</time></trkpt>
+      <trkpt lat="35.275500" lon="139.747000"><ele>0</ele><time>2026-01-01T00:00:45Z</time></trkpt>
+      <trkpt lat="35.278000" lon="139.751000"><ele>0</ele><time>2026-01-01T00:01:00Z</time></trkpt>
+      <trkpt lat="35.281000" lon="139.754000"><ele>0</ele><time>2026-01-01T00:01:15Z</time></trkpt>
+      <trkpt lat="35.284000" lon="139.756000"><ele>0</ele><time>2026-01-01T00:01:30Z</time></trkpt>
+      <trkpt lat="35.287000" lon="139.757000"><ele>0</ele><time>2026-01-01T00:01:45Z</time></trkpt>
+    </trkseg>
+  </trk>
+</gpx>
