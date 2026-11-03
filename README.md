@@ -39,3 +39,6 @@
 
 現在の等深線取得は海しるAPI V2を使用しています。V2提供終了前に、GeoJSONキャッシュとの
 互換性を維持しながらV3 FeatureServiceへ移行します。
+
+Play Storeで一般公開する場合の懸念点と作業手順は
+[`docs/PUBLIC_RELEASE_CHECKLIST.md`](docs/PUBLIC_RELEASE_CHECKLIST.md)を参照してください。
