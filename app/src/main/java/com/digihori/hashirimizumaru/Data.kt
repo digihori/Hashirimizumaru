@@ -18,6 +18,18 @@ data class Waypoint(
     @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0
 )
 
+fun nextWaypointName(waypoints: List<Waypoint>): String {
+    val lastNumber = waypoints.mapNotNull { waypoint ->
+        DEFAULT_WAYPOINT_NAME.matchEntire(waypoint.name.trim())
+            ?.groupValues
+            ?.get(1)
+            ?.toLongOrNull()
+    }.maxOrNull() ?: 0L
+    return "ポイント${lastNumber + 1}"
+}
+
+private val DEFAULT_WAYPOINT_NAME = Regex("ポイント([1-9][0-9]*)")
+
 @Entity(tableName = "catches")
 data class CatchRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

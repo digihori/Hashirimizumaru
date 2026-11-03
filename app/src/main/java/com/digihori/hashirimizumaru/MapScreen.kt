@@ -80,8 +80,8 @@ fun MapScreen(
     val trackFocus by vm.trackFocus.collectAsStateWithLifecycle()
     val savedMapCamera by vm.mapCamera.collectAsStateWithLifecycle()
     var layersOpen by remember { mutableStateOf(false) }
-    var addWaypoint by remember { mutableStateOf(false) }
-    var mapWaypointLocation by remember { mutableStateOf<LatLng?>(null) }
+    var addWaypoint by remember { mutableStateOf<Waypoint?>(null) }
+    var mapWaypoint by remember { mutableStateOf<Waypoint?>(null) }
     var recenterRequest by remember { mutableIntStateOf(0) }
     LaunchedEffect(showContours) {
         if (showContours) vm.loadContours()
@@ -112,7 +112,13 @@ fun MapScreen(
             onTrackFocusHandled = vm::consumeTrackFocus,
             onCatchFocusHandled = vm::consumeCatchFocus,
             onCatchSelected = vm::selectCatchOnMap,
-            onMapLongPress = { mapWaypointLocation = it }
+            onMapLongPress = { point ->
+                mapWaypoint = Waypoint(
+                    name = nextWaypointName(waypoints),
+                    latitude = point.latitude,
+                    longitude = point.longitude
+                )
+            }
         )
         Column(
             Modifier
@@ -297,7 +303,18 @@ fun MapScreen(
             Modifier.align(Alignment.BottomCenter).padding(12.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Button(onClick = { if (location != null) addWaypoint = true }, enabled = location != null) {
+            Button(
+                onClick = {
+                    location?.let { current ->
+                        addWaypoint = Waypoint(
+                            name = nextWaypointName(waypoints),
+                            latitude = current.latitude,
+                            longitude = current.longitude
+                        )
+                    }
+                },
+                enabled = location != null
+            ) {
                 Icon(Icons.Default.AddLocation, null); Spacer(Modifier.width(6.dp)); Text("ポイント")
             }
             AssistChip(onClick = {}, label = {
@@ -334,22 +351,22 @@ fun MapScreen(
                 )
         )
     }
-    if (addWaypoint && location != null) {
+    addWaypoint?.let { waypoint ->
         WaypointEditor(
-            initial = Waypoint(name = "", latitude = location!!.latitude, longitude = location!!.longitude),
+            initial = waypoint,
             currentLocation = location,
-            onDismiss = { addWaypoint = false },
-            onSave = { vm.saveWaypoint(it); addWaypoint = false }
+            onDismiss = { addWaypoint = null },
+            onSave = { vm.saveWaypoint(it); addWaypoint = null }
         )
     }
-    mapWaypointLocation?.let { point ->
+    mapWaypoint?.let { waypoint ->
         WaypointEditor(
-            initial = Waypoint(name = "", latitude = point.latitude, longitude = point.longitude),
+            initial = waypoint,
             currentLocation = location,
-            onDismiss = { mapWaypointLocation = null },
+            onDismiss = { mapWaypoint = null },
             onSave = {
                 vm.saveWaypoint(it)
-                mapWaypointLocation = null
+                mapWaypoint = null
             }
         )
     }

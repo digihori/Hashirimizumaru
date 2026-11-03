@@ -176,7 +176,7 @@ fun WaypointScreen(
             onClick = {
                 val lat = location?.latitude ?: 35.2708
                 val lon = location?.longitude ?: 139.7305
-                editing = Waypoint(name = "", latitude = lat, longitude = lon)
+                editing = Waypoint(name = nextWaypointName(values), latitude = lat, longitude = lon)
             },
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
         ) { Icon(Icons.Default.Add, "追加") }
